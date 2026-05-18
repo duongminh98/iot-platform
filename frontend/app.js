@@ -221,6 +221,10 @@ function renderSelectedLocker(locker) {
     selectedLockerAlerts.innerHTML = "";
     selectedLockerStats.innerHTML = "";
     chartArea.innerHTML = '<div class="empty-state">Historical chart will appear after data arrives.</div>';
+    if (chartInstance) {
+      chartInstance.destroy();
+      chartInstance = null;
+    }
     return;
   }
 
@@ -254,8 +258,6 @@ function renderSelectedLocker(locker) {
       `
     )
     .join("");
-
-  chartArea.innerHTML = '<div class="empty-state">Loading historical telemetry...</div>';
 }
 
 let chartInstance = null;
