@@ -179,7 +179,7 @@ function renderLockers(lockers) {
               <dd>${formatLock(locker.lock_state)}</dd>
             </div>
             <div>
-              <dt>Vibration</dt>
+              <dt>Rung bất thường</dt>
               <dd>${formatPercent(locker.vibration_score)}</dd>
             </div>
             <div>
@@ -249,7 +249,7 @@ function renderSelectedLocker(locker) {
     { label: "Lock state", value: formatLock(locker.lock_state) },
     { label: "Door state", value: formatDoor(locker.door) },
     { label: "Package status", value: formatPackage(locker.has_package) },
-    { label: "Vibration score", value: formatPercent(locker.vibration_score) },
+    { label: "Tỉ lệ có trộm (%)", value: formatPercent(locker.vibration_score) },
     { label: "FSR pressure", value: formatPercent(locker.fsr_percent) },
     { label: "Signal strength", value: formatSignal(locker.rssi) },
     { label: "Security severity", value: formatSeverity(locker.alert_severity) },
