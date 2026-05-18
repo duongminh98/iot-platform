@@ -15,6 +15,10 @@ const lastUpdatedLabel = document.getElementById("lastUpdatedLabel");
 const commandStatus = document.getElementById("commandStatus");
 const severityFilter = document.getElementById("severityFilter");
 const ackFilter = document.getElementById("ackFilter");
+const forecastGrid = document.getElementById("forecastGrid");
+const forecastSummary = document.getElementById("forecastSummary");
+const forecastFeatures = document.getElementById("forecastFeatures");
+const forecastModelLabel = document.getElementById("forecastModelLabel");
 
 const state = {
   lockers: [],
@@ -276,6 +280,47 @@ function renderSelectedLocker(locker) {
   `).join("");
 }
 
+function renderForecast(forecast) {
+  if (!forecast) {
+    forecastSummary.innerHTML = '<div class="empty-state">Forecast is not available yet.</div>';
+    forecastGrid.innerHTML = "";
+    forecastFeatures.innerHTML = "";
+    return;
+  }
+
+  forecastModelLabel.textContent = forecast.model_type === "mock-trained-logistic-regression"
+    ? "Mock-trained baseline"
+    : forecast.model_type;
+
+  const firstEmptyForecast = forecast.forecasts.find((item) => item.empty === 1);
+  forecastSummary.innerHTML = firstEmptyForecast
+    ? `<strong>Likely free in ${firstEmptyForecast.hours_ahead}h</strong><span>First horizon predicted empty</span>`
+    : "<strong>Likely occupied for 5h</strong><span>All forecast horizons predict package present</span>";
+
+  forecastGrid.innerHTML = forecast.forecasts.map((item) => `
+    <article class="forecast-card ${item.has_package === 1 ? "occupied" : "empty"}">
+      <span>+${item.hours_ahead}h</span>
+      <strong>${item.has_package === 1 ? "Có đồ" : "Trống"}</strong>
+      <em>${Math.round(item.probability_has_package * 100)}% có đồ</em>
+    </article>
+  `).join("");
+
+  const features = forecast.features;
+  forecastFeatures.innerHTML = [
+    ["State duration", `${features.state_duration_minutes} phút`],
+    ["Activity 12h", features.rolling_activity_12h],
+    ["Activity 24h", features.rolling_activity_24h],
+    ["Lag 1h / 2h / 3h", `${features.lag_1h} / ${features.lag_2h} / ${features.lag_3h}`],
+    ["Temperature", `${features.temperature_c}C`],
+    ["Day / hour", `${features.day_of_week} / ${features.hour_of_day}:00`]
+  ].map(([label, value]) => `
+    <div>
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join("");
+}
+
 function renderTelemetry(history, locker) {
   if (!locker || history.length === 0) {
     chartArea.innerHTML = '<div class="empty-state">No historical telemetry available for this locker yet.</div>';
@@ -407,6 +452,11 @@ async function loadAlerts(lockerId) {
   renderAlerts(state.alerts);
 }
 
+async function loadForecast(lockerId) {
+  const forecast = await fetchJson(`/forecast/${lockerId}`);
+  renderForecast(forecast);
+}
+
 function syncHistorySelect(lockers) {
   const currentValue = historySelect.value;
   historySelect.innerHTML = lockers
@@ -446,7 +496,11 @@ async function refreshDashboard() {
     if (lockers.length > 0) {
       const selectedLocker = lockers.find((locker) => locker.locker_id === state.selectedLockerId);
       renderSelectedLocker(selectedLocker);
-      await Promise.all([loadHistory(state.selectedLockerId), loadAlerts(state.selectedLockerId)]);
+      await Promise.all([
+        loadHistory(state.selectedLockerId),
+        loadAlerts(state.selectedLockerId),
+        loadForecast(state.selectedLockerId)
+      ]);
       lastUpdatedLabel.textContent = `Last sync ${new Date().toLocaleTimeString()}`;
     } else {
       historyTableBody.innerHTML =
@@ -474,7 +528,11 @@ lockerGrid.addEventListener("click", async (event) => {
   renderSelectedLocker(state.lockers.find((locker) => locker.locker_id === state.selectedLockerId));
 
   try {
-    await Promise.all([loadHistory(state.selectedLockerId), loadAlerts(state.selectedLockerId)]);
+    await Promise.all([
+      loadHistory(state.selectedLockerId),
+      loadAlerts(state.selectedLockerId),
+      loadForecast(state.selectedLockerId)
+    ]);
   } catch (error) {
     historyTableBody.innerHTML = `<tr><td colspan="7">${error.message}</td></tr>`;
   }
@@ -490,7 +548,11 @@ historySelect.addEventListener("change", async () => {
   renderSelectedLocker(state.lockers.find((locker) => locker.locker_id === state.selectedLockerId));
 
   try {
-    await Promise.all([loadHistory(state.selectedLockerId), loadAlerts(state.selectedLockerId)]);
+    await Promise.all([
+      loadHistory(state.selectedLockerId),
+      loadAlerts(state.selectedLockerId),
+      loadForecast(state.selectedLockerId)
+    ]);
   } catch (error) {
     historyTableBody.innerHTML = `<tr><td colspan="7">${error.message}</td></tr>`;
   }
@@ -553,7 +615,7 @@ socket.on("telemetry_update", async (data) => {
 
   if (lockerState.locker_id === state.selectedLockerId) {
     renderSelectedLocker(lockerState);
-    await loadHistory(state.selectedLockerId);
+    await Promise.all([loadHistory(state.selectedLockerId), loadForecast(state.selectedLockerId)]);
   }
 
   lastUpdatedLabel.textContent = `Live update at ${new Date().toLocaleTimeString()}`;

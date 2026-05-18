@@ -255,6 +255,89 @@ select {
   padding: 24px;
 }
 
+.forecast-panel {
+  margin-top: 16px;
+}
+
+.forecast-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.forecast-summary strong {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.1rem;
+}
+
+.forecast-summary span {
+  color: var(--muted);
+}
+
+.forecast-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.forecast-card {
+  padding: 14px 12px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.forecast-card span,
+.forecast-card em {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.forecast-card strong {
+  display: block;
+  margin: 7px 0 5px;
+}
+
+.forecast-card.empty {
+  border-color: rgba(121, 226, 160, 0.26);
+  background: rgba(121, 226, 160, 0.08);
+}
+
+.forecast-card.occupied {
+  border-color: rgba(245, 158, 11, 0.26);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.forecast-features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.forecast-features div {
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.forecast-features span,
+.forecast-features strong {
+  display: block;
+}
+
+.forecast-features span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.forecast-features strong {
+  margin-top: 6px;
+}
+
 .action-button,
 .control-select {
   border: 1px solid rgba(153, 173, 196, 0.18);
@@ -837,6 +920,8 @@ td {
   .focus-split,
   .control-grid,
   .device-health-grid,
+  .forecast-grid,
+  .forecast-features,
   .locker-card dl,
   .chart-metrics,
   .overview-grid {

@@ -68,6 +68,7 @@ The web UI is now a lightweight **Security Command Center**:
   - calibrate FSR
 - device health panel
 - temperature + FSR telemetry chart
+- occupancy forecast panel for the next 1–5 hours
 - security timeline with:
   - severity filter
   - open / acknowledged filter
@@ -124,6 +125,8 @@ The backend currently detects:
 - `GET /locker/:id`
 - `GET /history/:id`
 - `GET /alerts`
+- `GET /forecast/:id`
+- `GET /forecast/evaluation`
 - `GET /commands/:id`
 - `GET /health`
 
@@ -215,6 +218,23 @@ See:
 - `docs/IOT_EXECUTION_ROADMAP.md`
 
 for the fuller implementation roadmap.
+
+## Occupancy forecast baseline
+
+The dashboard now includes a mock-trained baseline that predicts whether a locker is likely to contain a package after 1, 2, 3, 4, and 5 hours.
+
+Runtime features are built from live telemetry and MongoDB history:
+
+- current occupancy-state duration
+- rolling package-state transitions over 12h and 24h
+- occupancy lag features at 1h, 2h, and 3h
+- latest sensed temperature
+- current day of week
+- current hour of day
+
+For now, the model is intentionally trained on synthetic data so the product flow can be demonstrated before real field data exists. It returns both the binary prediction and `probability_has_package`; replace the mock training dataset with collected device history before treating the score as operationally reliable.
+
+The synthetic dataset is split 80/20 into train and held-out test sets. The evaluation endpoint reports per-horizon accuracy, precision, recall, F1, ROC-AUC, Brier score, and confusion matrix so the same flow can later be reused with real telemetry-derived labels.
 
 ## Current status
 

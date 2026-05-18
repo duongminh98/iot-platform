@@ -6,6 +6,7 @@ const LockerReading = require("../models/LockerReading");
 const LockerState = require("../models/LockerState");
 const MobileDevice = require("../models/MobileDevice");
 const { publishCommand } = require("../services/lockerService");
+const { buildForecast, getModelEvaluation } = require("../services/occupancyForecastService");
 
 function readLockerId(value) {
   const lockerId = Number(value);
@@ -54,6 +55,19 @@ function createLockerRouter(historyLimit, mqttClient, config) {
         .lean();
 
       response.json(history);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/forecast/evaluation", (_request, response) => {
+    response.json(getModelEvaluation());
+  });
+
+  router.get("/forecast/:id", async (request, response, next) => {
+    try {
+      const lockerId = readLockerId(request.params.id);
+      response.json(await buildForecast(lockerId));
     } catch (error) {
       next(error);
     }
