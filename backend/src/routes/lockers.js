@@ -65,8 +65,11 @@ function createLockerRouter(historyLimit, mqttClient, config) {
       if (request.query.locker_id) {
         query.locker_id = readLockerId(request.query.locker_id);
       }
-      if (request.query.acknowledged === "false") {
-        query.acknowledged = false;
+      if (request.query.acknowledged === "false" || request.query.acknowledged === "true") {
+        query.acknowledged = request.query.acknowledged === "true";
+      }
+      if (["info", "warning", "critical"].includes(request.query.severity)) {
+        query.severity = request.query.severity;
       }
 
       const limit = Math.min(Number(request.query.limit) || 50, 200);

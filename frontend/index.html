@@ -82,10 +82,57 @@
             <div id="selectedLockerStats" class="focus-stats"></div>
           </div>
 
+          <div class="focus-split">
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <p class="section-label">Control Panel</p>
+                <strong id="commandStatus">Idle</strong>
+              </div>
+              <div class="control-grid">
+                <button data-command="unlock">Unlock 3s</button>
+                <button data-command="lock">Lock now</button>
+                <button data-command="beep">Trigger buzzer</button>
+                <button data-command="calibrate_fsr">Calibrate FSR</button>
+              </div>
+            </section>
+
+            <section class="subpanel">
+              <div class="subpanel-head">
+                <p class="section-label">Device Health</p>
+              </div>
+              <div id="deviceHealthStats" class="device-health-grid"></div>
+            </section>
+          </div>
+
           <div id="chartArea" class="chart-shell">
             <div class="empty-state">Historical chart will appear here after locker data is loaded.</div>
           </div>
         </section>
+      </section>
+
+      <section class="panel-shell">
+        <div class="section-head">
+          <div>
+            <p class="section-label">Security Timeline</p>
+            <h2>Recent incidents and events</h2>
+          </div>
+          <div class="timeline-toolbar">
+            <select id="severityFilter" class="control-select">
+              <option value="actionable">Actionable only</option>
+              <option value="all">All severities</option>
+              <option value="critical">Critical</option>
+              <option value="warning">Warning</option>
+              <option value="info">Info</option>
+            </select>
+            <select id="ackFilter" class="control-select">
+              <option value="open">Open only</option>
+              <option value="all">All alerts</option>
+              <option value="acknowledged">Acknowledged</option>
+            </select>
+          </div>
+        </div>
+        <div id="incidentSummary" class="incident-summary"></div>
+        <div id="securityTimeline" class="security-timeline"></div>
       </section>
 
       <section class="panel-shell">
@@ -116,7 +163,6 @@
       </section>
     </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="./app.js"></script>
   </body>
