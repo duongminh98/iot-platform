@@ -14,7 +14,7 @@ const char* mqtt_user = "YOUR_HIVEMQ_USERNAME";
 const char* mqtt_password = "YOUR_HIVEMQ_PASSWORD";
 
 // Thông tin định danh của thiết bị
-const String lockerId = "locker_01";
+const String lockerId = "1"; // Backend yêu cầu lockerId là một con số (VD: 1, 2, 3)
 const String topic_data = "locker/" + lockerId + "/data";
 const String topic_cmd = "locker/" + lockerId + "/command";
 const String topic_ack = "locker/" + lockerId + "/ack";
