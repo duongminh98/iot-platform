@@ -39,8 +39,8 @@ const unsigned long MSG_INTERVAL = 5000; // Gửi dữ liệu mỗi 5 giây
 
 // Biến đếm số lần rung và thời gian
 volatile int vibrationCount = 0;
-unsigned long lastVibrationTime = 0;
-unsigned long vibrationStartTime = 0; // Thời điểm bắt đầu chuỗi rung
+volatile unsigned long lastVibrationTime = 0;
+volatile unsigned long vibrationStartTime = 0; // Thời điểm bắt đầu chuỗi rung
 
 // Interrupt handler cho cảm biến rung
 void IRAM_ATTR detectVibration() {
