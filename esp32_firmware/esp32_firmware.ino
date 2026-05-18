@@ -4,17 +4,22 @@
 #include <ArduinoJson.h>
 
 // ================= CẤU HÌNH WIFI & MQTT =================
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
 
 // HiveMQ Cloud thông thường dùng port 8883 (TLS)
-const char* mqtt_server = "YOUR_CLUSTER_ID.s1.eu.hivemq.cloud";
 const int mqtt_port = 8883;
-const char* mqtt_user = "YOUR_HIVEMQ_USERNAME";
-const char* mqtt_password = "YOUR_HIVEMQ_PASSWORD";
+
+
+const char* ssid = "nhaso9";       // Tên Wi-Fi nhà bạn
+const char* password = "910082023"; // Mật khẩu Wi-Fi
+
+// HiveMQ Cloud thông thường dùng port 8883 (TLS)
+const char* mqtt_server = "dd793875ef39402c8a2f8dc020346b51.s1.eu.hivemq.cloud"; // Copy URL trong HiveMQ của bạn
+const char* mqtt_user = "nhom7";                 // Username bạn tạo trong HiveMQ
+const char* mqtt_password = "Nhom7nhom7";             // Mật khẩu HiveMQ
+
 
 // Thông tin định danh của thiết bị
-const String lockerId = "locker_01";
+const String lockerId = "1"; // Backend yêu cầu lockerId là một con số (VD: 1, 2, 3)
 const String topic_data = "locker/" + lockerId + "/data";
 const String topic_cmd = "locker/" + lockerId + "/command";
 const String topic_ack = "locker/" + lockerId + "/ack";
@@ -32,15 +37,19 @@ PubSubClient client(espClient);
 unsigned long lastMsgTime = 0;
 const unsigned long MSG_INTERVAL = 5000; // Gửi dữ liệu mỗi 5 giây
 
-// Biến đếm số lần rung
+// Biến đếm số lần rung và thời gian
 volatile int vibrationCount = 0;
 unsigned long lastVibrationTime = 0;
+unsigned long vibrationStartTime = 0; // Thời điểm bắt đầu chuỗi rung
 
 // Interrupt handler cho cảm biến rung
 void IRAM_ATTR detectVibration() {
   unsigned long currentTime = millis();
   // Debounce đơn giản (50ms) để tránh nhiễu tín hiệu
   if (currentTime - lastVibrationTime > 50) {
+    if (vibrationCount == 0) {
+      vibrationStartTime = currentTime; // Ghi lại lúc bắt đầu chuỗi rung
+    }
     vibrationCount++;
     lastVibrationTime = currentTime;
   }
@@ -160,8 +169,14 @@ void loop() {
 
   unsigned long now = millis();
   
-  // Xử lý gửi dữ liệu chu kỳ 5 giây, hoặc lập tức nếu rung động mạnh
-  bool sendUrgent = (vibrationCount >= 5); // Gửi ngay nếu phát hiện rung > 5 nhịp
+  // Tính toán thời gian rung liên tục (giữa nhịp đầu và nhịp cuối)
+  unsigned long vibrationDuration = 0;
+  if (vibrationCount > 1) {
+    vibrationDuration = lastVibrationTime - vibrationStartTime;
+  }
+
+  // Gửi khẩn cấp nếu rung lắc kéo dài từ 10 giây trở lên và vẫn đang tiếp diễn (nhịp cuối cách đây < 2s)
+  bool sendUrgent = (vibrationDuration >= 10000 && (now - lastVibrationTime < 2000)); 
   
   if (now - lastMsgTime > MSG_INTERVAL || sendUrgent) {
     lastMsgTime = now;
@@ -173,8 +188,13 @@ void loop() {
     int fsrRaw = analogRead(PIN_FSR);
     int fsrPercent = map(fsrRaw, 0, 4095, 0, 100);
 
-    // Tính toán điểm số rung động
-    int vibScore = min(vibrationCount * 10, 100); 
+    // Tính toán điểm số trộm dựa trên thời gian rung liên tục (tối đa 10s = 100%)
+    int vibScore = min((int)(vibrationDuration / 100), 100); 
+
+    // Nếu là gửi khẩn cấp do rung lắc 10s, ép điểm số lên 100
+    if (sendUrgent) {
+      vibScore = 100;
+    } 
 
     // Đóng gói JSON
     StaticJsonDocument<512> doc;
