@@ -25,7 +25,7 @@ const String topic_cmd = "locker/" + lockerId + "/command";
 const String topic_ack = "locker/" + lockerId + "/ack";
 
 // ================= CẤU HÌNH CHÂN (PINS) =================
-const int PIN_VIBRATION = 27; // Cảm biến rung SW420
+const int PIN_VIBRATION = 22; // Cảm biến rung SW420
 const int PIN_FSR = 34;       // Cảm biến lực FSR 406
 const int PIN_DOOR = 26;      // Cảm biến cửa MC-38
 const int PIN_LOCK = 25;      // Relay điều khiển khóa K01
@@ -35,7 +35,7 @@ WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
 unsigned long lastMsgTime = 0;
-const unsigned long MSG_INTERVAL = 5000; // Gửi dữ liệu mỗi 5 giây
+const unsigned long MSG_INTERVAL = 4000; // Gửi dữ liệu mỗi 5 giây
 
 // Biến đếm số lần rung và thời gian
 volatile int vibrationCount = 0;
@@ -176,7 +176,7 @@ void loop() {
   }
 
   // Gửi khẩn cấp nếu rung lắc kéo dài từ 10 giây trở lên và vẫn đang tiếp diễn (nhịp cuối cách đây < 2s)
-  bool sendUrgent = (vibrationDuration >= 10000 && (now - lastVibrationTime < 2000)); 
+  bool sendUrgent = (vibrationDuration >= 7000 && (now - lastVibrationTime < 2000)); 
   
   if (now - lastMsgTime > MSG_INTERVAL || sendUrgent) {
     lastMsgTime = now;
@@ -225,7 +225,9 @@ void loop() {
     Serial.println(msgBuffer);
     client.publish(topic_data.c_str(), msgBuffer);
 
-    // Reset bộ đếm rung sau khi gửi
-    vibrationCount = 0; 
+    // CHỈ Reset bộ đếm rung nếu là gửi khẩn cấp (đã đạt 10s) hoặc đã hết rung (qua 2 giây không có nhịp mới)
+    if (sendUrgent || (now - lastVibrationTime >= 2000)) {
+      vibrationCount = 0;
+    } 
   }
 }
