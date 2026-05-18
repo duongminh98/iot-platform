@@ -20,7 +20,35 @@ function formatDoor(value) {
 }
 
 function formatPackage(value) {
+  if (value === null || typeof value === "undefined") {
+    return "Unknown";
+  }
   return value === 1 ? "Present" : "Empty";
+}
+
+function formatTemperature(value) {
+  return typeof value === "number" ? `${value}C` : "N/A";
+}
+
+function formatLock(value) {
+  if (value === "locked") return "Locked";
+  if (value === "unlocked") return "Unlocked";
+  return "Unknown";
+}
+
+function formatPercent(value) {
+  return typeof value === "number" ? `${value}%` : "N/A";
+}
+
+function formatSignal(value) {
+  return typeof value === "number" ? `${value} dBm` : "N/A";
+}
+
+function formatSeverity(value) {
+  if (value === "critical") return "Critical";
+  if (value === "warning") return "Warning";
+  if (value === "info") return "Info";
+  return "Normal";
 }
 
 function formatTime(value) {
@@ -38,10 +66,12 @@ function computeOverview(lockers) {
   const total = lockers.length;
   const alerting = lockers.filter((locker) => Array.isArray(locker.alerts) && locker.alerts.length > 0)
     .length;
-  const averageTemp = total
-    ? (lockers.reduce((sum, locker) => sum + locker.temperature, 0) / total).toFixed(1)
-    : "0.0";
+  const temperatureSamples = lockers.filter((locker) => typeof locker.temperature === "number");
+  const averageTemp = temperatureSamples.length
+    ? (temperatureSamples.reduce((sum, locker) => sum + locker.temperature, 0) / temperatureSamples.length).toFixed(1)
+    : null;
   const packagesWaiting = lockers.filter((locker) => locker.has_package === 1).length;
+  const criticalSecurity = lockers.filter((locker) => locker.alert_severity === "critical").length;
 
   return [
     {
@@ -56,13 +86,15 @@ function computeOverview(lockers) {
     },
     {
       label: "Average temperature",
-      value: `${averageTemp}C`,
+      value: averageTemp ? `${averageTemp}C` : "N/A",
       detail: "Across latest locker states"
     },
     {
-      label: "Packages waiting",
-      value: String(packagesWaiting),
-      detail: "Lockers currently holding deliveries"
+      label: "Critical security",
+      value: String(criticalSecurity),
+      detail: packagesWaiting
+        ? `${packagesWaiting} lockers currently holding deliveries`
+        : "No critical tamper incidents"
     }
   ];
 }
@@ -101,11 +133,12 @@ function renderLockers(lockers) {
     .map((locker) => {
       const hasAlerts = Array.isArray(locker.alerts) && locker.alerts.length > 0;
       const isActive = locker.locker_id === state.selectedLockerId;
+      const severity = locker.alert_severity || (hasAlerts ? "warning" : "normal");
 
       return `
         <button
           type="button"
-          class="locker-card ${hasAlerts ? "alert" : ""} ${isActive ? "active" : ""}"
+          class="locker-card ${hasAlerts ? "alert" : ""} ${severity === "critical" ? "critical" : ""} ${isActive ? "active" : ""}"
           data-locker-id="${locker.locker_id}"
         >
           <div class="locker-head">
@@ -113,14 +146,14 @@ function renderLockers(lockers) {
               <h3>Locker ${locker.locker_id}</h3>
               <span class="metric-badge">${formatTime(locker.timestamp)}</span>
             </div>
-            <span class="status-badge ${hasAlerts ? "alert" : ""}">
-              ${hasAlerts ? "Attention" : "Healthy"}
+            <span class="status-badge ${hasAlerts ? "alert" : ""} ${severity === "critical" ? "critical" : ""}">
+              ${formatSeverity(severity)}
             </span>
           </div>
           <dl>
             <div>
               <dt>Temperature</dt>
-              <dd>${locker.temperature}C</dd>
+              <dd>${formatTemperature(locker.temperature)}</dd>
             </div>
             <div>
               <dt>Door</dt>
@@ -129,6 +162,22 @@ function renderLockers(lockers) {
             <div>
               <dt>Package</dt>
               <dd>${formatPackage(locker.has_package)}</dd>
+            </div>
+            <div>
+              <dt>Lock</dt>
+              <dd>${formatLock(locker.lock_state)}</dd>
+            </div>
+            <div>
+              <dt>Vibration</dt>
+              <dd>${formatPercent(locker.vibration_score)}</dd>
+            </div>
+            <div>
+              <dt>FSR</dt>
+              <dd>${formatPercent(locker.fsr_percent)}</dd>
+            </div>
+            <div>
+              <dt>RSSI</dt>
+              <dd>${formatSignal(locker.rssi)}</dd>
             </div>
             <div>
               <dt>Alerts</dt>
@@ -144,7 +193,7 @@ function renderLockers(lockers) {
 function renderHistory(history) {
   if (history.length === 0) {
     historyTableBody.innerHTML =
-      '<tr><td colspan="4">No history available for this locker yet.</td></tr>';
+      '<tr><td colspan="7">No history available for this locker yet.</td></tr>';
     return;
   }
 
@@ -153,9 +202,12 @@ function renderHistory(history) {
       (entry) => `
         <tr>
           <td>${formatTime(entry.timestamp)}</td>
-          <td>${entry.temperature}C</td>
+          <td>${formatTemperature(entry.temperature)}</td>
           <td>${formatDoor(entry.door)}</td>
           <td>${formatPackage(entry.has_package)}</td>
+          <td>${formatLock(entry.lock_state)}</td>
+          <td>${formatPercent(entry.vibration_score)}</td>
+          <td>${formatPercent(entry.fsr_percent)}</td>
         </tr>
       `
     )
@@ -186,9 +238,15 @@ function renderSelectedLocker(locker) {
     .join("");
 
   selectedLockerStats.innerHTML = [
-    { label: "Temperature", value: `${locker.temperature}C` },
+    { label: "Temperature", value: formatTemperature(locker.temperature) },
+    { label: "Lock state", value: formatLock(locker.lock_state) },
     { label: "Door state", value: formatDoor(locker.door) },
     { label: "Package status", value: formatPackage(locker.has_package) },
+    { label: "Vibration score", value: formatPercent(locker.vibration_score) },
+    { label: "FSR pressure", value: formatPercent(locker.fsr_percent) },
+    { label: "Signal strength", value: formatSignal(locker.rssi) },
+    { label: "Security severity", value: formatSeverity(locker.alert_severity) },
+    { label: "Last command", value: locker.latest_command_status || "No command yet" },
     { label: "Last warning", value: locker.last_warning || "No warning logged" }
   ]
     .map(
@@ -216,14 +274,16 @@ function renderTelemetry(history, locker) {
 
   const samples = [...history].reverse();
   const labels = samples.map((entry) => formatTimeShort(entry.timestamp));
-  const data = samples.map((entry) => entry.temperature);
+  const temperatureData = samples.map((entry) => entry.temperature);
+  const fsrData = samples.map((entry) => entry.fsr_percent);
+  const numericValues = [...temperatureData, ...fsrData].filter((value) => typeof value === "number");
 
-  if (!chartArea.querySelector('canvas')) {
+  if (!chartArea.querySelector("canvas")) {
     chartArea.innerHTML = `
       <div class="chart-head">
         <div>
           <p class="section-label">Telemetry Curve</p>
-          <h3>Temperature trend</h3>
+          <h3>Temperature and FSR trend</h3>
         </div>
       </div>
       <div class="chart-scroll" style="position: relative; height: 320px; width: 100%;">
@@ -233,64 +293,76 @@ function renderTelemetry(history, locker) {
     `;
   }
 
-  const timelineStrip = document.getElementById('timelineStrip');
+  const timelineStrip = document.getElementById("timelineStrip");
   if (timelineStrip) {
-    timelineStrip.innerHTML = samples.map(entry => {
+    timelineStrip.innerHTML = samples.map((entry) => {
       const classes = ["timeline-chip"];
-      if (entry.temperature > 35) classes.push("is-hot");
+      if (entry.vibration_score >= 70) classes.push("is-tamper");
+      else if (entry.temperature > 35) classes.push("is-hot");
       else if (entry.door === 1) classes.push("is-door");
       else if (entry.has_package === 1) classes.push("is-package");
-      
+
       return `
         <span class="${classes.join(" ")}">
-          ${formatTimeShort(entry.timestamp)} · ${entry.temperature}C · ${entry.door === 1 ? "Door open" : "Door closed"} · ${entry.has_package === 1 ? "Package in" : "Empty"}
+          ${formatTimeShort(entry.timestamp)} - ${formatTemperature(entry.temperature)} - ${entry.door === 1 ? "Door open" : "Door closed"} - ${formatLock(entry.lock_state)} - FSR ${formatPercent(entry.fsr_percent)}
         </span>
       `;
     }).join("");
   }
 
-  const ctx = document.getElementById('telemetryChart').getContext('2d');
+  const ctx = document.getElementById("telemetryChart").getContext("2d");
 
   if (chartInstance) {
     chartInstance.data.labels = labels;
-    chartInstance.data.datasets[0].data = data;
-    chartInstance.data.datasets[0].pointRadius = samples.map(s => s.temperature > 35 ? 6 : 3);
-    chartInstance.data.datasets[0].pointBackgroundColor = samples.map(s => s.temperature > 35 ? '#ef4444' : '#3b82f6');
+    chartInstance.data.datasets[0].data = temperatureData;
+    chartInstance.data.datasets[1].data = fsrData;
+    chartInstance.data.datasets[0].pointRadius = samples.map((s) => s.temperature > 35 ? 6 : 3);
+    chartInstance.data.datasets[0].pointBackgroundColor = samples.map((s) => s.temperature > 35 ? "#ef4444" : "#3b82f6");
+    chartInstance.data.datasets[1].pointRadius = samples.map((s) => s.vibration_score >= 70 ? 6 : 3);
+    chartInstance.data.datasets[1].pointBackgroundColor = samples.map((s) => s.vibration_score >= 70 ? "#ef4444" : "#20c7bd");
     chartInstance.update();
   } else {
     chartInstance = new Chart(ctx, {
-      type: 'line',
+      type: "line",
       data: {
-        labels: labels,
+        labels,
         datasets: [{
-          label: 'Temperature (C)',
-          data: data,
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          label: "Temperature (C)",
+          data: temperatureData,
+          borderColor: "#3b82f6",
+          backgroundColor: "rgba(59, 130, 246, 0.1)",
           fill: true,
           tension: 0.4,
-          pointRadius: samples.map(s => s.temperature > 35 ? 6 : 3),
-          pointBackgroundColor: samples.map(s => s.temperature > 35 ? '#ef4444' : '#3b82f6'),
+          pointRadius: samples.map((s) => s.temperature > 35 ? 6 : 3),
+          pointBackgroundColor: samples.map((s) => s.temperature > 35 ? "#ef4444" : "#3b82f6")
+        }, {
+          label: "FSR pressure (%)",
+          data: fsrData,
+          borderColor: "#20c7bd",
+          backgroundColor: "rgba(32, 199, 189, 0.08)",
+          fill: false,
+          tension: 0.35,
+          pointRadius: samples.map((s) => s.vibration_score >= 70 ? 6 : 3),
+          pointBackgroundColor: samples.map((s) => s.vibration_score >= 70 ? "#ef4444" : "#20c7bd")
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: false },
           tooltip: {
-            mode: 'index',
-            intersect: false,
+            mode: "index",
+            intersect: false
           }
         },
         scales: {
           y: {
-            suggestedMin: Math.min(...data) - 5,
-            suggestedMax: Math.max(...data) + 5
+            suggestedMin: numericValues.length ? Math.min(...numericValues) - 5 : 0,
+            suggestedMax: numericValues.length ? Math.max(...numericValues) + 5 : 100
           }
         },
         animation: {
-            duration: 400
+          duration: 400
         }
       }
     });
@@ -359,14 +431,14 @@ async function refreshDashboard() {
       lastUpdatedLabel.textContent = `Last sync ${new Date().toLocaleTimeString()}`;
     } else {
       historyTableBody.innerHTML =
-        '<tr><td colspan="4">History will appear after the first MQTT messages arrive.</td></tr>';
+        '<tr><td colspan="7">History will appear after the first MQTT messages arrive.</td></tr>';
       lastUpdatedLabel.textContent = "Awaiting first update";
     }
   } catch (error) {
     overviewStats.innerHTML = "";
     renderEmptyState(`Failed to load dashboard data: ${error.message}`);
     historyTableBody.innerHTML =
-      '<tr><td colspan="4">Unable to fetch history while the backend is unavailable.</td></tr>';
+      '<tr><td colspan="7">Unable to fetch history while the backend is unavailable.</td></tr>';
     lastUpdatedLabel.textContent = "Backend unavailable";
   }
 }
@@ -385,7 +457,7 @@ lockerGrid.addEventListener("click", async (event) => {
   try {
     await loadHistory(state.selectedLockerId);
   } catch (error) {
-    historyTableBody.innerHTML = `<tr><td colspan="4">${error.message}</td></tr>`;
+    historyTableBody.innerHTML = `<tr><td colspan="7">${error.message}</td></tr>`;
   }
 });
 
@@ -401,7 +473,7 @@ historySelect.addEventListener("change", async () => {
   try {
     await loadHistory(state.selectedLockerId);
   } catch (error) {
-    historyTableBody.innerHTML = `<tr><td colspan="4">${error.message}</td></tr>`;
+    historyTableBody.innerHTML = `<tr><td colspan="7">${error.message}</td></tr>`;
   }
 });
 
@@ -413,8 +485,8 @@ const socket = io();
 
 socket.on("telemetry_update", async (data) => {
   const lockerState = data.state;
-  
-  const index = state.lockers.findIndex(l => l.locker_id === lockerState.locker_id);
+
+  const index = state.lockers.findIndex((locker) => locker.locker_id === lockerState.locker_id);
   if (index >= 0) {
     state.lockers[index] = lockerState;
   } else {
@@ -431,6 +503,14 @@ socket.on("telemetry_update", async (data) => {
   }
 
   lastUpdatedLabel.textContent = `Live update at ${new Date().toLocaleTimeString()}`;
+});
+
+socket.on("alert_created", () => {
+  refreshDashboard();
+});
+
+socket.on("command_updated", () => {
+  refreshDashboard();
 });
 
 refreshDashboard();
