@@ -7,7 +7,8 @@
     "start:backend": "node backend/src/index.js",
     "start:simulator": "node simulator/index.js",
     "dev:backend": "node --watch backend/src/index.js",
-    "dev:simulator": "node --watch simulator/index.js"
+    "dev:simulator": "node --watch simulator/index.js",
+    "test:contract": "node scripts/contract-smoke.js"
   },
   "dependencies": {
     "aedes": "^0.51.3",

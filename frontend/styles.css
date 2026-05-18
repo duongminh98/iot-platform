@@ -295,6 +295,10 @@ select {
   border-color: rgba(255, 107, 107, 0.32);
 }
 
+.locker-card.critical {
+  box-shadow: 0 18px 42px rgba(255, 107, 107, 0.16);
+}
+
 .locker-head {
   display: flex;
   align-items: flex-start;
@@ -312,6 +316,11 @@ select {
 .status-badge.alert {
   background: rgba(255, 107, 107, 0.12);
   color: #ffc4c4;
+}
+
+.status-badge.critical {
+  background: rgba(255, 107, 107, 0.18);
+  color: #ffd1d1;
 }
 
 .locker-card dl {
@@ -555,6 +564,11 @@ select {
 .timeline-chip.is-hot {
   background: rgba(255, 107, 107, 0.12);
   color: #ffc4c4;
+}
+
+.timeline-chip.is-tamper {
+  background: rgba(255, 107, 107, 0.18);
+  color: #ffd1d1;
 }
 
 .timeline-chip.is-door {

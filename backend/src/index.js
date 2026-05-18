@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 const config = require("./config");
 const { connectToDatabase } = require("./db");
 const { createLockerRouter } = require("./routes/lockers");
-const { startBroker, startMqttSubscriber } = require("./services/lockerService");
+const { startMqttInfrastructure } = require("./services/lockerService");
 
 async function main() {
   await connectToDatabase(config.mongoUri);
@@ -14,28 +14,30 @@ async function main() {
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: "*" } });
 
-  await startBroker(config.mqttPort);
-  startMqttSubscriber(config.mqttPort, {
-    packageStaleSeconds: config.packageStaleSeconds,
-    doorOpenStaleSeconds: config.doorOpenStaleSeconds
-  }, io);
+  const mqttClient = await startMqttInfrastructure(config, io);
 
   app.use(express.json());
-  app.use(createLockerRouter(config.historyLimit));
+  app.use(createLockerRouter(config.historyLimit, mqttClient, config));
   app.use(express.static(config.frontendDir));
 
   app.get("/health", (_request, response) => {
     response.json({
       status: "ok",
+      mqttUrl: config.mqttUrl || `mqtt://127.0.0.1:${config.mqttPort}`,
       mqttPort: config.mqttPort,
       packageStaleSeconds: config.packageStaleSeconds,
-      doorOpenStaleSeconds: config.doorOpenStaleSeconds
+      doorOpenStaleSeconds: config.doorOpenStaleSeconds,
+      vibrationCriticalScore: config.vibrationCriticalScore,
+      fsrDropCriticalPercent: config.fsrDropCriticalPercent,
+      weakSignalRssi: config.weakSignalRssi,
+      alertDedupSeconds: config.alertDedupSeconds,
+      commandTimeoutSeconds: config.commandTimeoutSeconds
     });
   });
 
   app.use((error, _request, response, _next) => {
     console.error(error);
-    response.status(500).json({ message: "Internal server error." });
+    response.status(error.statusCode || 500).json({ message: error.message || "Internal server error." });
   });
 
   server.listen(config.port, () => {
