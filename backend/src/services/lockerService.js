@@ -28,6 +28,11 @@ function parseTempTopic(topic) {
   return match ? Number(match[1]) : null;
 }
 
+function parseFsrTopic(topic) {
+  const match = /^locker\/(\d+)\/fsr_force$/.exec(topic);
+  return match ? Number(match[1]) : null;
+}
+
 function isNumberOrNull(value) {
   return typeof value === "number" || value === null || typeof value === "undefined";
 }
@@ -333,6 +338,20 @@ async function handleLockerData(topic, messageBuffer, thresholds, io, config) {
         : null
   };
 
+  // Kế thừa các chỉ số từ state cũ nếu payload rung lắc hiện tại bị khuyết (vì đã chuyển FSR/Nhiệt độ sang luồng riêng)
+  if (state.temperature === null && previousState && previousState.temperature !== undefined) {
+    state.temperature = previousState.temperature;
+  }
+  if (state.fsr_raw === null && previousState && previousState.fsr_raw !== undefined) {
+    state.fsr_raw = previousState.fsr_raw;
+  }
+  if (state.fsr_percent === null && previousState && previousState.fsr_percent !== undefined) {
+    state.fsr_percent = previousState.fsr_percent;
+  }
+  if (state.has_package === null && previousState && previousState.has_package !== undefined) {
+    state.has_package = previousState.has_package;
+  }
+
   const updatedState = await LockerState.findOneAndUpdate({ locker_id: lockerId }, state, {
     upsert: true,
     new: true,
@@ -435,6 +454,55 @@ async function handleLockerTemp(topic, messageBuffer, io) {
   }
 }
 
+async function handleLockerFsr(topic, messageBuffer, io) {
+  const lockerId = parseFsrTopic(topic);
+  if (lockerId === null) return;
+
+  let payload;
+  try {
+    payload = JSON.parse(messageBuffer.toString("utf8"));
+  } catch (error) {
+    console.error(`Invalid JSON on topic ${topic}:`, error.message);
+    return;
+  }
+
+  if (typeof payload.force_value !== "number") return;
+
+  // Xử lý ML: Quy đổi giá trị ADC (0-4095) thành % và nhãn has_package
+  // Giả sử: ngưỡng > 500 là có đồ (1), ngược lại là không có (0)
+  const fsr_percent = Math.min(100, Math.round((payload.force_value / 4095) * 100));
+  const has_package = payload.force_value > 500 ? 1 : 0;
+
+  const state = await LockerState.findOneAndUpdate(
+    { locker_id: lockerId },
+    { 
+      fsr_raw: payload.force_value,
+      fsr_percent: fsr_percent,
+      has_package: has_package,
+      timestamp: new Date() 
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  const reading = await LockerReading.create({
+    locker_id: lockerId,
+    fsr_raw: payload.force_value,
+    fsr_percent: fsr_percent,
+    has_package: has_package,
+    temperature: state.temperature ?? null,
+    door: state.door ?? 0,
+    lock_state: state.lock_state ?? "unknown",
+    timestamp: new Date()
+  });
+
+  if (io) {
+    io.emit("telemetry_update", {
+      reading,
+      state
+    });
+  }
+}
+
 function startBroker(port) {
   const broker = Aedes();
   const server = net.createServer(broker.handle);
@@ -485,7 +553,7 @@ async function startMqttInfrastructure(config, io) {
 
   client.on("connect", () => {
     console.log("Backend MQTT client connected.");
-    client.subscribe(["locker/+/data", "locker/+/ack", "locker/+/temperature"], (error) => {
+    client.subscribe(["locker/+/data", "locker/+/ack", "locker/+/temperature", "locker/+/fsr_force"], (error) => {
       if (error) {
         console.error("Failed to subscribe to locker topics:", error.message);
       }
@@ -500,6 +568,8 @@ async function startMqttInfrastructure(config, io) {
         await handleLockerAck(topic, message, io);
       } else if (parseTempTopic(topic) !== null) {
         await handleLockerTemp(topic, message, io);
+      } else if (parseFsrTopic(topic) !== null) {
+        await handleLockerFsr(topic, message, io);
       }
     } catch (error) {
       console.error(`Failed to process topic ${topic}:`, error.message);

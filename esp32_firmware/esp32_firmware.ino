@@ -27,7 +27,7 @@ const String topic_ack = "locker/" + lockerId + "/ack";
 
 // ================= CẤU HÌNH CHÂN (PINS) =================
 const int PIN_VIBRATION = 22; // Cảm biến rung SW420
-const int PIN_FSR = 34;       // Cảm biến lực FSR 406
+const int PIN_FSR = 34;       // Cảm biến lực FSR 400 (Dùng chân 34 vì 21 không hỗ trợ đọc Analog ADC trên ESP32)
 const int PIN_DOOR = 26;      // Cảm biến cửa MC-38
 const int PIN_LOCK = 25;      // Relay điều khiển khóa K01
 
@@ -36,8 +36,13 @@ const int PIN_LOCK = 25;      // Relay điều khiển khóa K01
 DHT dht(DHTPIN, DHTTYPE);
 
 const String topic_temp = "locker/" + lockerId + "/temperature";
+const String topic_fsr = "locker/" + lockerId + "/fsr_force";
+
 float last_sent_temp = -999.0;
 unsigned long lastTempTime = 0;
+
+int last_sent_fsr = -999;
+unsigned long lastFsrTime = 0;
 
 // ================= BIẾN TOÀN CỤC =================
 WiFiClientSecure espClient;
@@ -154,6 +159,7 @@ void setup() {
   digitalWrite(PIN_LOCK, LOW);
   pinMode(PIN_DOOR, INPUT_PULLUP);
   pinMode(PIN_VIBRATION, INPUT_PULLUP);
+  // Không cần pinMode cho chân Analog (34)
   
   // Attach interrupt cho chân rung
   attachInterrupt(digitalPinToInterrupt(PIN_VIBRATION), detectVibration, FALLING);
@@ -202,6 +208,32 @@ void loop() {
     }
   }
 
+  // Logic FSR 400 mỗi 1 giây (1000ms)
+  if (now - lastFsrTime >= 1000) {
+    lastFsrTime = now;
+    int current_fsr = analogRead(PIN_FSR);
+    
+    // Nếu giá trị thay đổi lớn hơn 100 (tùy chỉnh độ nhạy) thì gửi
+    if (abs(current_fsr - last_sent_fsr) > 100) {
+      StaticJsonDocument<256> docFsr;
+      docFsr["force_value"] = current_fsr;
+      docFsr["threshold_status"] = "changed";
+      docFsr["timestamp"] = now;
+      
+      char msgBuffer[256];
+      serializeJson(docFsr, msgBuffer);
+      
+      Serial.print("Publishing FSR: ");
+      Serial.println(msgBuffer);
+      client.publish(topic_fsr.c_str(), msgBuffer);
+      
+      last_sent_fsr = current_fsr;
+    } else {
+      Serial.print("FSR unchanged: ");
+      Serial.println(current_fsr);
+    }
+  }
+
   // Mỗi 0.5 giây (500ms) kiểm tra và thực hiện in ra/gửi dữ liệu
   if (now - lastMsgTime >= 500) {
     lastMsgTime = now;
@@ -219,10 +251,7 @@ void loop() {
       
       // 3. Các cảm biến khác hardcode ở phase này
       doc["door"] = 0; 
-      doc["has_package"] = 1; 
-      // doc["temperature"] = 28.5;  // Đã bỏ hardcode nhiệt độ 
-      doc["fsr_raw"] = 2000;
-      doc["fsr_percent"] = 50;
+      // Bỏ hardcode has_package, fsr_raw, fsr_percent để tránh xung đột với luồng FSR
       doc["lock_state"] = "locked";
       
       doc["rssi"] = WiFi.RSSI();
