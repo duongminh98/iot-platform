@@ -57,9 +57,13 @@ async function waitFor(path, predicate, label, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
   let latest;
   while (Date.now() < deadline) {
-    latest = await fetchJson(path);
-    if (predicate(latest)) {
-      return latest;
+    try {
+      latest = await fetchJson(path);
+      if (predicate(latest)) {
+        return latest;
+      }
+    } catch (error) {
+      latest = { error: error.message };
     }
     await sleep(300);
   }

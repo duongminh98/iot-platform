@@ -6,6 +6,7 @@ const LockerReading = require("../models/LockerReading");
 const LockerState = require("../models/LockerState");
 const MobileDevice = require("../models/MobileDevice");
 const { publishCommand } = require("../services/lockerService");
+const { buildForecast, getModelEvaluation } = require("../services/occupancyForecastService");
 
 function readLockerId(value) {
   const lockerId = Number(value);
@@ -59,14 +60,30 @@ function createLockerRouter(historyLimit, mqttClient, config) {
     }
   });
 
+  router.get("/forecast/evaluation", (_request, response) => {
+    response.json(getModelEvaluation());
+  });
+
+  router.get("/forecast/:id", async (request, response, next) => {
+    try {
+      const lockerId = readLockerId(request.params.id);
+      response.json(await buildForecast(lockerId));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/alerts", async (request, response, next) => {
     try {
       const query = {};
       if (request.query.locker_id) {
         query.locker_id = readLockerId(request.query.locker_id);
       }
-      if (request.query.acknowledged === "false") {
-        query.acknowledged = false;
+      if (request.query.acknowledged === "false" || request.query.acknowledged === "true") {
+        query.acknowledged = request.query.acknowledged === "true";
+      }
+      if (["info", "warning", "critical"].includes(request.query.severity)) {
+        query.severity = request.query.severity;
       }
 
       const limit = Math.min(Number(request.query.limit) || 50, 200);
