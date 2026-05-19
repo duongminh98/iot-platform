@@ -115,7 +115,6 @@ private fun SmartLockerScreen(
     var status by remember { mutableStateOf("Connect to HiveMQ to receive locker 1 telemetry.") }
     var fcmStatus by remember { mutableStateOf("Subscribing to FCM topic locker_1_theft...") }
     var bleStatus by remember { mutableStateOf("BLE disconnected.") }
-    var lastTheftNotificationAt by remember { mutableStateOf(0L) }
 
     fun connectMqtt() {
         mqttJob?.cancel()
@@ -130,13 +129,6 @@ private fun SmartLockerScreen(
                         is MqttEvent.Telemetry -> {
                             locker = event.state
                             status = "Telemetry received from HiveMQ."
-                            if (event.theftDetected) {
-                                val now = System.currentTimeMillis()
-                                if (now - lastTheftNotificationAt > 10_000) {
-                                    lastTheftNotificationAt = now
-                                    notificationHelper.showTheftNotification(event.state)
-                                }
-                            }
                         }
                     }
                 }
@@ -190,7 +182,7 @@ private fun SmartLockerScreen(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Locker 1 only. The app subscribes directly to HiveMQ and shows a local notification for theft detection telemetry.",
+                text = "Locker 1 only. HiveMQ is used for live status; push notifications are sent by the backend through Firebase when dashboard theft detection turns red.",
                 color = Color(0xFFB8C5D6)
             )
 

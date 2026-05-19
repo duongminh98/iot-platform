@@ -66,10 +66,11 @@ async function sendTopicNotification(config, alert) {
     return;
   }
 
-  await admin.messaging(app).send({
+  const messageId = await admin.messaging(app).send({
     ...buildMessagePayload(alert),
     topic: config.fcmDemoTopic || "locker_1_theft"
   });
+  console.log(`[FCM sent] topic=${config.fcmDemoTopic || "locker_1_theft"} alert=${alert.type} messageId=${messageId}`);
 }
 
 async function sendTokenNotifications(config, alert) {
@@ -95,6 +96,10 @@ async function sendTokenNotifications(config, alert) {
 
 async function notifyCriticalAlert(config, alert) {
   if (alert.severity !== "critical") {
+    return;
+  }
+
+  if (alert.type !== "theft_alarm") {
     return;
   }
 

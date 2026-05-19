@@ -104,10 +104,6 @@ function addAlert(alerts, type, severity, message, metadata = {}) {
   alerts.push({ type, severity, message, metadata });
 }
 
-function isSecurityEventType(eventType) {
-  return typeof eventType === "string" && /theft|tamper|forced/i.test(eventType);
-}
-
 function buildVibrationScore(reading, thresholds) {
   if (typeof reading.vibration_score === "number") {
     return reading.vibration_score;
@@ -207,16 +203,6 @@ function buildAlertCandidates(previousState, reading, thresholds) {
     );
   }
 
-  if (isSecurityEventType(reading.event_type)) {
-    addAlert(
-      candidates,
-      "theft_alarm",
-      "critical",
-      `Locker ${reading.locker_id} reported security event: ${reading.event_type}.`,
-      { event_type: reading.event_type }
-    );
-  }
-
   if (
     totalVibrations > thresholds.vibrationCriticalTotal
   ) {
@@ -306,6 +292,14 @@ async function createDedupedAlerts(reading, candidates, thresholds, io, config, 
     }).lean();
 
     if (duplicate) {
+      await notifyCriticalAlert(config, {
+        locker_id: reading.locker_id,
+        type: candidate.type,
+        severity: candidate.severity,
+        message: candidate.message,
+        metadata: candidate.metadata,
+        timestamp: reading.timestamp
+      });
       continue;
     }
 
