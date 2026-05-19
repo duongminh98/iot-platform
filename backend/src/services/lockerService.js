@@ -104,9 +104,49 @@ function addAlert(alerts, type, severity, message, metadata = {}) {
   alerts.push({ type, severity, message, metadata });
 }
 
+function isSecurityEventType(eventType) {
+  return typeof eventType === "string" && /theft|tamper|forced/i.test(eventType);
+}
+
+function buildVibrationScore(reading, thresholds) {
+  if (typeof reading.vibration_score === "number") {
+    return reading.vibration_score;
+  }
+
+  if (typeof reading.vibration_count !== "number" || thresholds.vibrationCriticalTotal <= 0) {
+    return null;
+  }
+
+  return Math.min(100, Math.round((reading.vibration_count / thresholds.vibrationCriticalTotal) * 100));
+}
+
+function updateVibrationWindow(lockerId, reading, thresholds) {
+  const now = reading.timestamp.getTime();
+  const windowMs = thresholds.vibrationWindowSeconds * 1000;
+  const count = typeof reading.vibration_count === "number" ? reading.vibration_count : 0;
+
+  if (!vibrationQueues[lockerId]) {
+    vibrationQueues[lockerId] = [];
+  }
+
+  if (count > 0) {
+    vibrationQueues[lockerId].push({
+      timestamp: now,
+      count
+    });
+  }
+
+  vibrationQueues[lockerId] = vibrationQueues[lockerId].filter((entry) => now - entry.timestamp <= windowMs);
+
+  return vibrationQueues[lockerId].reduce((sum, entry) => sum + entry.count, 0);
+}
+
 function buildAlertCandidates(previousState, reading, thresholds) {
   const candidates = [];
   const timestamp = reading.timestamp;
+  const isLocked = reading.lock_state === "locked";
+  const vibrationScore = buildVibrationScore(reading, thresholds);
+  const totalVibrations = updateVibrationWindow(reading.locker_id, reading, thresholds);
 
   let packageSince = null;
   if (reading.has_package === 1) {
@@ -167,18 +207,34 @@ function buildAlertCandidates(previousState, reading, thresholds) {
     );
   }
 
-  // Core Logic for Vibration Theft Alarm (PRD)
-  if (typeof reading.vibration_count === "number" && reading.vibration_count >= 150) {
+  if (isSecurityEventType(reading.event_type)) {
     addAlert(
       candidates,
       "theft_alarm",
       "critical",
-      `Locker ${reading.locker_id} detected continuous strong vibration (${reading.vibration_count} count).`,
-      { vibration_count: reading.vibration_count }
+      `Locker ${reading.locker_id} reported security event: ${reading.event_type}.`,
+      { event_type: reading.event_type }
     );
   }
 
-  if (reading.lock_state === "locked" && reading.door === 1) {
+  if (
+    totalVibrations > thresholds.vibrationCriticalTotal
+  ) {
+    addAlert(
+      candidates,
+      "theft_alarm",
+      "critical",
+      `Locker ${reading.locker_id} detected theft vibration total (${totalVibrations}) in ${thresholds.vibrationWindowSeconds}s.`,
+      {
+        vibration_count: reading.vibration_count,
+        vibration_score: vibrationScore,
+        vibration_total: totalVibrations,
+        vibration_window_seconds: thresholds.vibrationWindowSeconds
+      }
+    );
+  }
+
+  if (isLocked && reading.door === 1) {
     addAlert(
       candidates,
       "forced_entry",
@@ -197,7 +253,7 @@ function buildAlertCandidates(previousState, reading, thresholds) {
         : null;
 
   if (
-    reading.lock_state === "locked" &&
+    isLocked &&
     typeof fsrDelta === "number" &&
     fsrDelta <= -Math.abs(thresholds.fsrDropCriticalPercent)
   ) {
@@ -308,6 +364,9 @@ async function handleLockerData(topic, messageBuffer, thresholds, io, config, mq
     ...normalized,
     timestamp
   };
+  if (reading.vibration_score === null) {
+    reading.vibration_score = buildVibrationScore(reading, thresholds);
+  }
 
   const previousState = await LockerState.findOne({ locker_id: lockerId }).lean();
   await LockerReading.create(reading);
@@ -323,7 +382,7 @@ async function handleLockerData(topic, messageBuffer, thresholds, io, config, mq
     ...reading,
     package_since: alertState.packageSince,
     door_open_since: alertState.doorOpenSince,
-    alerts: alertState.candidates.map((alert) => alert.type),
+    alerts: [...new Set(alertState.candidates.map((alert) => alert.type))],
     alert_severity: summarizeSeverity(alertState.candidates),
     last_warning:
       alertState.candidates.length > 0
@@ -538,9 +597,10 @@ async function startMqttInfrastructure(config, io) {
   const thresholds = {
     packageStaleSeconds: config.packageStaleSeconds,
     doorOpenStaleSeconds: config.doorOpenStaleSeconds,
-    vibrationCriticalScore: config.vibrationCriticalScore,
     fsrDropCriticalPercent: config.fsrDropCriticalPercent,
     weakSignalRssi: config.weakSignalRssi,
+    vibrationCriticalTotal: config.vibrationCriticalTotal,
+    vibrationWindowSeconds: config.vibrationWindowSeconds,
     alertDedupSeconds: config.alertDedupSeconds
   };
 

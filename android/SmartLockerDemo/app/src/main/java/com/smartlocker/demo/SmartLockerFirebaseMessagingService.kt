@@ -28,12 +28,13 @@ class SmartLockerFirebaseMessagingService : FirebaseMessagingService() {
         val manager = getSystemService(NotificationManager::class.java)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Locker 1 theft detection",
-                NotificationManager.IMPORTANCE_HIGH
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    channelId,
+                    "Locker 1 theft detection",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
             )
-            manager.createNotificationChannel(channel)
         }
 
         val intent = Intent(this, MainActivity::class.java)

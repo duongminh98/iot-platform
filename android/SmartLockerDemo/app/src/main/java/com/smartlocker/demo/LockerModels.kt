@@ -5,6 +5,7 @@ data class LockerState(
     val temperature: Double?,
     val door: Int?,
     val hasPackage: Int?,
+    val vibrationCount: Double?,
     val vibrationScore: Double?,
     val fsrPercent: Double?,
     val lockState: String?,

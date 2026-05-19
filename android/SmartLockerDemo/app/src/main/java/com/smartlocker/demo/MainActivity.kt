@@ -5,7 +5,6 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.core.app.ActivityCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -40,23 +39,31 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.google.firebase.FirebaseApp
+import androidx.core.app.ActivityCompat
 import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 class MainActivity : ComponentActivity() {
     private lateinit var bleClient: BleEsp32Client
+    private lateinit var mqttClient: MqttLockerClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestDemoPermissions()
         bleClient = BleEsp32Client(this)
+        mqttClient = MqttLockerClient()
 
         setContent {
             SmartLockerTheme {
-                SmartLockerScreen(bleClient = bleClient)
+                SmartLockerScreen(
+                    bleClient = bleClient,
+                    mqttClient = mqttClient
+                )
             }
         }
     }
@@ -73,9 +80,7 @@ class MainActivity : ComponentActivity() {
             permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
 
-        if (permissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 100)
-        }
+        ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 100)
     }
 }
 
@@ -94,45 +99,77 @@ private fun SmartLockerTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SmartLockerScreen(bleClient: BleEsp32Client) {
+private fun SmartLockerScreen(
+    bleClient: BleEsp32Client,
+    mqttClient: MqttLockerClient
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var apiBaseUrl by rememberSaveable { mutableStateOf("http://10.0.2.2:3000") }
-    var locker by remember { mutableStateOf<LockerState?>(null) }
-    var alerts by remember { mutableStateOf<List<LockerAlert>>(emptyList()) }
-    var status by remember { mutableStateOf("Ready. Configure backend URL, then refresh locker 1.") }
-    var fcmStatus by remember { mutableStateOf("FCM token not registered yet.") }
-    var bleStatus by remember { mutableStateOf("BLE disconnected.") }
+    val notificationHelper = remember { NotificationHelper(context) }
+    var mqttJob by remember { mutableStateOf<Job?>(null) }
 
-    fun refresh() {
-        scope.launch {
-            status = "Loading locker 1..."
+    var mqttUrl by rememberSaveable { mutableStateOf(BuildConfig.MQTT_URL.ifBlank { "mqtts://your-hivemq-host:8883" }) }
+    var mqttUsername by rememberSaveable { mutableStateOf(BuildConfig.MQTT_USERNAME) }
+    var mqttPassword by rememberSaveable { mutableStateOf(BuildConfig.MQTT_PASSWORD) }
+    var locker by remember { mutableStateOf<LockerState?>(null) }
+    var status by remember { mutableStateOf("Connect to HiveMQ to receive locker 1 telemetry.") }
+    var fcmStatus by remember { mutableStateOf("Subscribing to FCM topic locker_1_theft...") }
+    var bleStatus by remember { mutableStateOf("BLE disconnected.") }
+    var lastTheftNotificationAt by remember { mutableStateOf(0L) }
+
+    fun connectMqtt() {
+        mqttJob?.cancel()
+        mqttJob = scope.launch {
+            status = "Connecting to HiveMQ..."
             runCatching {
-                val api = SmartLockerApi(apiBaseUrl)
-                locker = api.getLocker(1)
-                alerts = api.getAlerts(1)
-            }.onSuccess {
-                status = "Locker 1 refreshed."
+                mqttClient.connect(mqttUrl, mqttUsername, mqttPassword, 1).collect { event ->
+                    when (event) {
+                        MqttEvent.Connected -> status = "Connected. Subscribed to locker/1/data."
+                        MqttEvent.Disconnected -> status = "MQTT disconnected. Reconnecting if possible..."
+                        is MqttEvent.Error -> status = "MQTT error: ${event.message}"
+                        is MqttEvent.Telemetry -> {
+                            locker = event.state
+                            status = "Telemetry received from HiveMQ."
+                            if (event.theftDetected) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastTheftNotificationAt > 10_000) {
+                                    lastTheftNotificationAt = now
+                                    notificationHelper.showTheftNotification(event.state)
+                                }
+                            }
+                        }
+                    }
+                }
             }.onFailure {
-                status = "Refresh failed: ${it.message}"
+                if (it !is CancellationException) {
+                    status = "MQTT error: ${it.message}"
+                }
             }
         }
     }
 
-    LaunchedEffect(apiBaseUrl) {
+    LaunchedEffect(Unit) {
+        notificationHelper.ensureTheftChannel()
+
         runCatching {
-            FirebaseApp.initializeApp(context)
-            val token = FirebaseMessaging.getInstance().token.await()
-            SmartLockerApi(apiBaseUrl).registerToken(token)
-            fcmStatus = "FCM registered for locker 1 demo: ${token.take(18)}..."
+            FirebaseMessaging.getInstance().subscribeToTopic("locker_1_theft").await()
+        }.onSuccess {
+            fcmStatus = "FCM topic ready: locker_1_theft."
         }.onFailure {
-            fcmStatus = "FCM not configured or not reachable: ${it.message}"
+            fcmStatus = "FCM topic failed: ${it.message}"
         }
-        refresh()
+
+        if (BuildConfig.MQTT_URL.isNotBlank()) {
+            connectMqtt()
+        }
     }
 
     DisposableEffect(Unit) {
-        onDispose { bleClient.close() }
+        onDispose {
+            mqttJob?.cancel()
+            mqttClient.close()
+            bleClient.close()
+        }
     }
 
     Surface(
@@ -148,27 +185,44 @@ private fun SmartLockerScreen(bleClient: BleEsp32Client) {
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(
-                text = "Smart Locker Demo",
+                text = "Smart Locker HiveMQ Demo",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Locker 1 only. No login. Theft detection notifications are handled through Firebase Cloud Messaging.",
+                text = "Locker 1 only. The app subscribes directly to HiveMQ and shows a local notification for theft detection telemetry.",
                 color = Color(0xFFB8C5D6)
             )
 
             CardBlock {
                 OutlinedTextField(
-                    value = apiBaseUrl,
-                    onValueChange = { apiBaseUrl = it },
-                    label = { Text("Backend URL") },
+                    value = mqttUrl,
+                    onValueChange = { mqttUrl = it },
+                    label = { Text("HiveMQ URL") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = mqttUsername,
+                    onValueChange = { mqttUsername = it },
+                    label = { Text("MQTT username") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = mqttPassword,
+                    onValueChange = { mqttPassword = it },
+                    label = { Text("MQTT password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = { refresh() }) {
-                        Text("Refresh locker 1")
+                    Button(onClick = { connectMqtt() }) {
+                        Text("Connect HiveMQ")
                     }
                     Button(
                         onClick = {
@@ -192,42 +246,18 @@ private fun SmartLockerScreen(bleClient: BleEsp32Client) {
             }
 
             CardBlock {
-                Text("Theft detection alerts", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                if (alerts.isEmpty()) {
-                    Text("No recent alerts for locker 1.", color = Color(0xFFB8C5D6))
-                } else {
-                    alerts.forEach { alert ->
-                        Text("${alert.severity.uppercase()} - ${alert.type}", fontWeight = FontWeight.SemiBold)
-                        Text(alert.message, color = Color(0xFFB8C5D6))
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                }
-            }
-
-            CardBlock {
                 Text("Demo request", fontWeight = FontWeight.Bold)
                 Text(
-                    text = "This sends a placeholder MQTT command through the backend and writes a placeholder JSON request to ESP32 over BLE if connected.",
+                    text = "This publishes a placeholder command to locker/1/command on HiveMQ and writes the same kind of placeholder request to ESP32 over BLE if connected.",
                     color = Color(0xFFB8C5D6)
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 Button(
                     onClick = {
                         scope.launch {
-                            status = "Sending demo request..."
-                            val mqttResult = runCatching { SmartLockerApi(apiBaseUrl).sendDemoMqttRequest(1) }
+                            val mqttSent = runCatching { mqttClient.publishDemoRequest(1) }.getOrDefault(false)
                             val bleSent = runCatching { bleClient.sendDemoRequest(1) }.getOrDefault(false)
-                            status = buildString {
-                                append(
-                                    mqttResult.fold(
-                                        onSuccess = { "MQTT command ${it.action}/${it.status}" },
-                                        onFailure = { "MQTT failed: ${it.message}" }
-                                    )
-                                )
-                                append(" | ")
-                                append(if (bleSent) "BLE placeholder sent" else "BLE not sent")
-                            }
+                            status = "HiveMQ publish: ${if (mqttSent) "sent" else "not connected"} | BLE: ${if (bleSent) "sent" else "not connected"}"
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -265,7 +295,7 @@ private fun CardBlock(content: @Composable () -> Unit) {
 @Composable
 private fun StatusGrid(locker: LockerState?) {
     if (locker == null) {
-        Text("No locker data loaded.", color = Color(0xFFB8C5D6))
+        Text("No MQTT telemetry received yet.", color = Color(0xFFB8C5D6))
         return
     }
 
@@ -279,24 +309,27 @@ private fun StatusGrid(locker: LockerState?) {
             Metric("Temp", locker.temperature?.let { "${it}C" } ?: "N/A", Modifier.weight(1f))
             Spacer(modifier = Modifier.width(10.dp))
             Metric("Package", when (locker.hasPackage) {
-                1 -> "Has package"
+                1 -> "Present"
                 0 -> "Empty"
                 else -> "Unknown"
             }, Modifier.weight(1f))
         }
         Row(modifier = Modifier.fillMaxWidth()) {
-            Metric("Vibration", locker.vibrationScore?.let { "${it.toInt()}%" } ?: "N/A", Modifier.weight(1f))
+            val vibrationValue = locker.vibrationScore?.let { "${it.toInt()}%" }
+                ?: locker.vibrationCount?.let { "${it.toInt()} count" }
+                ?: "N/A"
+            Metric("Vibration", vibrationValue, Modifier.weight(1f))
             Spacer(modifier = Modifier.width(10.dp))
             Metric("FSR", locker.fsrPercent?.let { "${it.toInt()}%" } ?: "N/A", Modifier.weight(1f))
         }
         Row(modifier = Modifier.fillMaxWidth()) {
             Metric("RSSI", locker.rssi?.let { "${it.toInt()} dBm" } ?: "N/A", Modifier.weight(1f))
             Spacer(modifier = Modifier.width(10.dp))
-            Metric("Severity", locker.alertSeverity ?: "normal", Modifier.weight(1f))
+            Metric("Severity", locker.alertSeverity ?: "from telemetry", Modifier.weight(1f))
         }
         Text(
-            text = locker.lastWarning ?: "No warning logged.",
-            color = if (locker.alertSeverity == "critical") Color(0xFFFFB4B4) else Color(0xFFB8C5D6)
+            text = locker.lastWarning ?: "Waiting for warning/event text.",
+            color = Color(0xFFB8C5D6)
         )
     }
 }

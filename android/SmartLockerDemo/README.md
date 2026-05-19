@@ -1,101 +1,78 @@
 # Smart Locker Demo Android App
 
-Android demo app for locker 1.
+Android demo app for locker 1 using HiveMQ for realtime telemetry and Firebase Cloud Messaging for push notifications when the app is not open.
 
-## Features
-
-- No login.
-- Displays locker 1 status from the backend:
-  - door
-  - lock state
-  - temperature
-  - package state
-  - vibration score
-  - FSR pressure
-  - RSSI
-  - alert severity
-- Registers a Firebase Cloud Messaging token with:
-
-```http
-POST /mobile/register-token
-```
-
-- Shows theft detection notifications for locker 1 only.
-- Sends a demo backend MQTT command:
-
-```http
-POST /locker/1/command
-```
-
-with:
-
-```json
-{
-  "action": "beep",
-  "requested_by": "android-demo"
-}
-```
-
-- Sends a placeholder BLE payload to ESP32 if connected:
-
-```json
-{
-  "type": "demo_request",
-  "locker_id": 1,
-  "action": "placeholder"
-}
-```
-
-## Open In Android Studio
-
-Open this folder:
+## Runtime Flow
 
 ```text
-android/SmartLockerDemo
+ESP32 -> HiveMQ locker/1/data -> Backend theft detection -> Firebase FCM topic -> Android notification
+Android app -> HiveMQ locker/1/data for foreground realtime view
+Android app -> HiveMQ locker/1/command for placeholder demo request
+Android app -> BLE placeholder payload to ESP32 if connected
 ```
 
-The project does not include a Gradle wrapper. Use Android Studio's Gradle installation or add a wrapper from Android Studio.
+## Firebase
 
-## Backend URL
-
-The app defaults to:
+The app subscribes to this FCM topic on first launch:
 
 ```text
-http://10.0.2.2:3000
+locker_1_theft
 ```
 
-Use this for Android Emulator talking to backend on the host machine.
+The backend sends critical locker 1 alerts to the same topic. This allows Android to receive push notifications even when the app is not open.
 
-For a real Android phone on the same Wi-Fi, change the URL in the app to your laptop LAN IP, for example:
-
-```text
-http://192.168.1.20:3000
-```
-
-The Android manifest enables cleartext HTTP for local demo.
-
-## Firebase Setup
-
-1. Create a Firebase Android app with package:
-
-```text
-com.smartlocker.demo
-```
-
-2. Download `google-services.json`.
-3. Put it at:
+Required local file:
 
 ```text
 android/SmartLockerDemo/app/google-services.json
 ```
 
-4. Keep `google-services.json.example` as reference only.
+The package name in Firebase must be:
 
-The Google Services Gradle plugin is enabled. The app needs a real `google-services.json` before building with Firebase Messaging.
+```text
+com.smartlocker.demo
+```
+
+## Backend Firebase Admin
+
+The backend reads Firebase Admin credentials from:
+
+```text
+FIREBASE_SERVICE_ACCOUNT_BASE64
+```
+
+Optional config:
+
+```text
+FCM_DEMO_TOPIC=locker_1_theft
+MOBILE_DEMO_LOCKER_ID=1
+```
+
+## HiveMQ
+
+The Android app reads these values from the repository root `.env` at build time:
+
+```text
+MQTT_URL
+MQTT_USERNAME
+MQTT_PASSWORD
+```
+
+It subscribes to:
+
+```text
+locker/1/data
+```
+
+It publishes placeholder commands to:
+
+```text
+locker/1/command
+```
 
 ## ESP32 BLE Contract
 
-The Android app scans for BLE devices whose name contains:
+The app scans for BLE devices whose name contains:
 
 ```text
 ESP32
@@ -105,18 +82,12 @@ Locker
 The app writes to Nordic UART style UUIDs:
 
 ```text
-Service UUID:        6e400001-b5a3-f393-e0a9-e50e24dcca9e
-Write characteristic: 6e400002-b5a3-f393-e0a9-e50e24dcca9e
+Service UUID:          6e400001-b5a3-f393-e0a9-e50e24dcca9e
+Write characteristic:  6e400002-b5a3-f393-e0a9-e50e24dcca9e
 ```
 
-Make the ESP32 firmware expose those UUIDs before using the BLE request button.
+## Build Notes
 
-## Backend Demo Notification Scope
-
-Backend push notifications are limited to locker 1 by:
-
-```text
-MOBILE_DEMO_LOCKER_ID=1
-```
-
-This keeps the Android demo focused on one physical locker.
+- Use JDK 21 for Gradle.
+- If `.env` changes, rebuild the Android app so `BuildConfig` is regenerated.
+- `google-services.json` and local build files are ignored by Git.

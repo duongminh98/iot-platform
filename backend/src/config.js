@@ -24,7 +24,8 @@ module.exports = {
   mongoUri: process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/smart_locker_iot",
   packageStaleSeconds: readNumber("PACKAGE_STALE_SECONDS", 30),
   doorOpenStaleSeconds: readNumber("DOOR_OPEN_STALE_SECONDS", 20),
-  vibrationCriticalScore: readNumber("VIBRATION_CRITICAL_SCORE", 70),
+  vibrationCriticalTotal: readNumber("VIBRATION_CRITICAL_TOTAL", 150),
+  vibrationWindowSeconds: readNumber("VIBRATION_WINDOW_SECONDS", 15),
   fsrDropCriticalPercent: readNumber("FSR_DROP_CRITICAL_PERCENT", 30),
   weakSignalRssi: readNumber("WEAK_SIGNAL_RSSI", -80),
   alertDedupSeconds: readNumber("ALERT_DEDUP_SECONDS", 60),
@@ -32,6 +33,10 @@ module.exports = {
   historyLimit: readNumber("HISTORY_LIMIT", 100),
   fcmProjectId: process.env.FCM_PROJECT_ID || null,
   fcmAccessToken: process.env.FCM_ACCESS_TOKEN || null,
+  firebaseServiceAccountBase64: process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || null,
+  firebaseServiceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || null,
+  fcmDemoTopic: process.env.FCM_DEMO_TOPIC || "locker_1_theft",
+  fcmThrottleSeconds: readNumber("FCM_THROTTLE_SECONDS", 20),
   mobileDemoLockerId: readNumber("MOBILE_DEMO_LOCKER_ID", 1),
   frontendDir: path.resolve(__dirname, "../../frontend")
 };
