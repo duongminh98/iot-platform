@@ -4,8 +4,8 @@
 #include <ArduinoJson.h>
 
 // Wi-Fi
-const char* ssid = "nhaso9";
-const char* password = "910082023";
+const char* ssid = "P302";
+const char* password = "302302302";
 
 // HiveMQ Cloud
 const char* mqtt_server = "dd793875ef39402c8a2f8dc020346b51.s1.eu.hivemq.cloud";
@@ -100,16 +100,17 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
 
   const bool shouldAlarm =
     strcmp(status, "theft") == 0 &&
-    strcmp(alertType, "theft_alarm") == 0 &&
+    (strcmp(alertType, "theft_alarm") == 0 || strcmp(alertType, "forced_entry") == 0) &&
     lockerId == DEMO_LOCKER_ID &&
     fcmRequested;
 
   if (!shouldAlarm) {
-    Serial.println("Ignored security payload that does not match locker 1 theft_alarm with fcm_requested=true.");
+    Serial.println("Ignored security payload that does not match locker 1 theft/forced-entry alarm with fcm_requested=true.");
     return;
   }
 
-  Serial.println("Locker 1 theft_alarm confirmed by backend FCM trigger.");
+  Serial.print("Locker 1 alarm confirmed by backend: ");
+  Serial.println(alertType);
   startAlarm(alarmMs);
 }
 

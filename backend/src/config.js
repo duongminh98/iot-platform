@@ -25,6 +25,7 @@ module.exports = {
   packageStaleSeconds: readNumber("PACKAGE_STALE_SECONDS", 30),
   doorOpenStaleSeconds: readNumber("DOOR_OPEN_STALE_SECONDS", 60),
   packageDoorOpenCriticalSeconds: readNumber("PACKAGE_DOOR_OPEN_CRITICAL_SECONDS", 30),
+  authorizedCloseGraceSeconds: readNumber("AUTHORIZED_CLOSE_GRACE_SECONDS", 5),
   vibrationCriticalTotal: readNumber("VIBRATION_CRITICAL_TOTAL", 150),
   vibrationWindowSeconds: readNumber("VIBRATION_WINDOW_SECONDS", 15),
   fsrDropCriticalPercent: readNumber("FSR_DROP_CRITICAL_PERCENT", 30),

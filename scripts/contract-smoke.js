@@ -118,7 +118,7 @@ async function main() {
   await sleep(500);
 
   await publish(client, `locker/${LOCKER_ID}/data`, {
-    door: 1,
+    door: 0,
     has_package: 1,
     temperature: null,
     vibration: 1,
@@ -135,7 +135,7 @@ async function main() {
   });
 
   await publish(client, `locker/${LOCKER_ID}/data`, {
-    door: 1,
+    door: 0,
     has_package: 1,
     temperature: null,
     vibration: 1,
@@ -150,6 +150,38 @@ async function main() {
     event_type: "contract_tamper"
   });
 
+  await publish(client, `locker/${LOCKER_ID}/data`, {
+    door: 1,
+    has_package: 1,
+    temperature: null,
+    vibration: 1,
+    vibration_count: 200,
+    fsr_raw: 1500,
+    fsr_percent: 35,
+    fsr_delta: -40,
+    lock_state: "unlocked",
+    battery_percent: null,
+    rssi: -84,
+    uptime_ms: 124456,
+    event_type: "contract_authorized_open"
+  });
+
+  await publish(client, `locker/${LOCKER_ID}/data`, {
+    door: 1,
+    has_package: 1,
+    temperature: null,
+    vibration: 0,
+    vibration_count: 0,
+    fsr_raw: 1500,
+    fsr_percent: 35,
+    fsr_delta: -40,
+    lock_state: "locked",
+    battery_percent: null,
+    rssi: -84,
+    uptime_ms: 124956,
+    event_type: "contract_forced_entry"
+  });
+
   const locker = await waitFor(
     `/locker/${LOCKER_ID}`,
     (body) => body.vibration_score === 88 && body.fsr_delta === -40,
@@ -158,7 +190,6 @@ async function main() {
 
   assert(locker.temperature === null, "temperature should allow null.");
   assert(locker.lock_state === "locked", "lock_state should be stored.");
-  assert(locker.alerts.includes("theft_alarm"), "theft_alarm should be active.");
   assert(locker.alerts.includes("forced_entry"), "forced_entry should be active.");
 
   const history = await fetchJson(`/history/${LOCKER_ID}?limit=3`);

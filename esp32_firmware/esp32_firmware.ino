@@ -3,6 +3,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
+#include "esp_wifi.h"
 
 // ================= CẤU HÌNH WIFI & MQTT =================
 
@@ -10,8 +11,8 @@
 const int mqtt_port = 8883;
 
 
-const char* ssid = "nhaso9";       // Tên Wi-Fi nhà bạn
-const char* password = "910082023"; // Mật khẩu Wi-Fi
+const char* ssid = "P302";       // Tên Wi-Fi nhà bạn
+const char* password = "302302302"; // Mật khẩu Wi-Fi
 
 // HiveMQ Cloud thông thường dùng port 8883 (TLS)
 const char* mqtt_server = "dd793875ef39402c8a2f8dc020346b51.s1.eu.hivemq.cloud"; // Copy URL trong HiveMQ của bạn
@@ -45,6 +46,9 @@ int last_sent_fsr = -999;
 unsigned long lastFsrTime = 0;
 
 int last_door_state = -1;
+String currentLockState = "locked";
+bool waitingForDoorCloseAfterUnlock = false;
+const int DOOR_CLOSED_STATE = HIGH;
 
 // ================= BIẾN TOÀN CỤC =================
 WiFiClientSecure espClient;
@@ -52,11 +56,59 @@ PubSubClient client(espClient);
 
 unsigned long lastMsgTime = 0;
 const unsigned long MSG_INTERVAL = 4000; // Gửi dữ liệu mỗi 5 giây
+const int DEFAULT_UNLOCK_DURATION_MS = 3000;
 
 // Biến đếm số lần rung và thời gian
 volatile int vibrationCount = 0;
 volatile unsigned long lastVibrationTime = 0;
 volatile unsigned long vibrationStartTime = 0; // Thời điểm bắt đầu chuỗi rung
+
+void publishLockState(const char* eventType, int doorState, unsigned long timestamp) {
+  StaticJsonDocument<256> doc;
+  doc["event"] = eventType;
+  doc["door"] = doorState;
+  doc["lock_state"] = currentLockState;
+  doc["timestamp"] = timestamp;
+
+  char msgBuffer[256];
+  serializeJson(doc, msgBuffer);
+  Serial.print("Publishing Lock State: ");
+  Serial.println(msgBuffer);
+  client.publish(topic_data.c_str(), msgBuffer);
+}
+
+void unlockK01(unsigned long durationMs, const char* source) {
+  unsigned long unlockStart = millis();
+  int doorState = last_door_state == -1 ? digitalRead(PIN_DOOR) : last_door_state;
+
+  currentLockState = "unlocked";
+  waitingForDoorCloseAfterUnlock = true;
+  publishLockState("unlock", doorState, unlockStart);
+
+  Serial.print(">> MỞ KHÓA K01 từ ");
+  Serial.println(source);
+  digitalWrite(PIN_LOCK, HIGH);
+  delay(durationMs);
+  digitalWrite(PIN_LOCK, LOW);
+  Serial.println(">> ĐÃ KHÓA K01");
+}
+
+void handleSerialCommand() {
+  while (Serial.available() > 0) {
+    char command = (char)Serial.read();
+
+    if (command == '\r' || command == '\n') {
+      continue;
+    }
+
+    if (command == '1') {
+      unlockK01(DEFAULT_UNLOCK_DURATION_MS, "Serial");
+    } else {
+      Serial.print(">> Lệnh không hợp lệ: ");
+      Serial.println(command);
+    }
+  }
+}
 
 // Interrupt handler cho cảm biến rung
 void IRAM_ATTR detectVibration() {
@@ -131,23 +183,16 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (!error) {
     String action = doc["action"];
     if (action == "unlock") {
-      Serial.println(">> MỞ KHÓA K01");
-      digitalWrite(PIN_LOCK, HIGH); // Kích relay mở khóa
-      
-      // Chờ mở khóa trong thời gian duration_ms hoặc mặc định 3 giây
-      int duration = doc["duration_ms"] | 3000;
-      delay(duration); 
-      
-      digitalWrite(PIN_LOCK, LOW);  // Khóa lại
-      Serial.println(">> ĐÃ KHÓA K01");
-      
+      int duration = doc["duration_ms"] | DEFAULT_UNLOCK_DURATION_MS;
+      unlockK01(duration, "MQTT");
+
       // Gửi Ack về backend xác nhận
       StaticJsonDocument<256> ackDoc;
       ackDoc["command_id"] = doc["command_id"];
       ackDoc["action"] = "unlock";
       ackDoc["status"] = "accepted";
-      ackDoc["lock_state"] = "locked"; // Khóa lại ngay sau khi mở
-      
+      ackDoc["lock_state"] = currentLockState;
+
       char ackBuffer[256];
       serializeJson(ackDoc, ackBuffer);
       client.publish(topic_ack.c_str(), ackBuffer);
@@ -157,6 +202,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("Nhập 1 để mở khóa K01");
   pinMode(PIN_LOCK, OUTPUT);
   digitalWrite(PIN_LOCK, LOW);
   pinMode(PIN_DOOR, INPUT_PULLUP);
@@ -165,7 +211,6 @@ void setup() {
   
   // Attach interrupt cho chân rung
   attachInterrupt(digitalPinToInterrupt(PIN_VIBRATION), detectVibration, FALLING);
-
   dht.begin();
   setup_wifi();
   
@@ -181,6 +226,7 @@ void loop() {
     reconnect();
   }
   client.loop();
+  handleSerialCommand();
 
   unsigned long now = millis();
   
@@ -240,12 +286,18 @@ void loop() {
   int current_door_state = digitalRead(PIN_DOOR);
   if (current_door_state != last_door_state) {
     if (last_door_state != -1) { // Không gửi ngay lúc mới bật nguồn
+      bool doorClosedAfterUnlock = waitingForDoorCloseAfterUnlock && last_door_state != DOOR_CLOSED_STATE && current_door_state == DOOR_CLOSED_STATE;
+      if (doorClosedAfterUnlock) {
+        currentLockState = "locked";
+        waitingForDoorCloseAfterUnlock = false;
+      }
+
       StaticJsonDocument<512> docDoor;
       docDoor["timestamp"] = now;
       docDoor["door"] = current_door_state;
       docDoor["vibration"] = 0;
       docDoor["vibration_count"] = 0;
-      docDoor["lock_state"] = "locked"; // Hoặc trạng thái thực tế
+      docDoor["lock_state"] = currentLockState;
       docDoor["rssi"] = WiFi.RSSI();
       docDoor["uptime_ms"] = now;
 
@@ -254,6 +306,10 @@ void loop() {
       Serial.print("Publishing Door State changed: ");
       Serial.println(msgBuffer);
       client.publish(topic_data.c_str(), msgBuffer);
+
+      if (doorClosedAfterUnlock) {
+        publishLockState("relocked", current_door_state, now);
+      }
     }
     last_door_state = current_door_state;
   }
@@ -274,9 +330,9 @@ void loop() {
       doc["vibration_count"] = vibrationCount;
       
       // 3. Các cảm biến khác hardcode ở phase này
-      doc["door"] = last_door_state == -1 ? 0 : last_door_state; 
+      doc["door"] = last_door_state == -1 ? 0 : last_door_state;
       // Bỏ hardcode has_package, fsr_raw, fsr_percent để tránh xung đột với luồng FSR
-      doc["lock_state"] = "locked";
+      doc["lock_state"] = currentLockState;
       
       doc["rssi"] = WiFi.RSSI();
       doc["uptime_ms"] = now;

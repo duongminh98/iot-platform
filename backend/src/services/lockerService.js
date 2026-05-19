@@ -140,7 +140,31 @@ function updateVibrationWindow(lockerId, reading, thresholds) {
   return vibrationQueues[lockerId].reduce((sum, entry) => sum + entry.count, 0);
 }
 
-function buildAlertCandidates(previousState, reading, thresholds) {
+function buildAccessContext(previousState, reading, thresholds) {
+  const wasAuthorized = previousState?.authorized_access_active === true;
+  const wasUnlocked = previousState?.lock_state === "unlocked";
+  const startsAuthorized = reading.lock_state === "unlocked";
+  const staysAuthorized = (wasAuthorized || wasUnlocked) && reading.door === 1;
+  const closesAuthorized = (wasAuthorized || wasUnlocked) && reading.door === 0 && reading.lock_state === "locked";
+  const graceUntil = closesAuthorized
+    ? new Date(reading.timestamp.getTime() + thresholds.authorizedCloseGraceSeconds * 1000)
+    : previousState?.tamper_grace_until ?? null;
+  const inGrace = graceUntil instanceof Date && reading.timestamp < graceUntil;
+
+  return {
+    authorizedAccessActive: startsAuthorized || staysAuthorized,
+    authorizedAccessStartedAt: startsAuthorized
+      ? reading.timestamp
+      : staysAuthorized
+        ? previousState?.authorized_access_started_at ?? reading.timestamp
+        : null,
+    tamperGraceUntil: graceUntil,
+    inGrace,
+    protectedMode: reading.lock_state === "locked" && reading.door === 0 && !startsAuthorized && !staysAuthorized && !inGrace
+  };
+}
+
+function buildAlertCandidates(previousState, reading, thresholds, accessContext) {
   const candidates = [];
   const timestamp = reading.timestamp;
   const isLocked = reading.lock_state === "locked";
@@ -222,6 +246,7 @@ function buildAlertCandidates(previousState, reading, thresholds) {
   }
 
   if (
+    accessContext.protectedMode &&
     totalVibrations > thresholds.vibrationCriticalTotal
   ) {
     addAlert(
@@ -299,7 +324,7 @@ function summarizeSeverity(candidates) {
 }
 
 function publishBuzzerAlarm(mqttClient, alert) {
-  if (!mqttClient || alert.type !== "theft_alarm") {
+  if (!mqttClient || !["theft_alarm", "forced_entry"].includes(alert.type)) {
     return;
   }
 
@@ -400,7 +425,8 @@ async function handleLockerData(topic, messageBuffer, thresholds, io, config, mq
   const previousState = await LockerState.findOne({ locker_id: lockerId }).lean();
   await LockerReading.create(reading);
 
-  const alertState = buildAlertCandidates(previousState, reading, thresholds);
+  const accessContext = buildAccessContext(previousState, reading, thresholds);
+  const alertState = buildAlertCandidates(previousState, reading, thresholds, accessContext);
   for (const alert of alertState.candidates) {
     console.warn(alert.message);
   }
@@ -411,6 +437,9 @@ async function handleLockerData(topic, messageBuffer, thresholds, io, config, mq
     ...reading,
     package_since: alertState.packageSince,
     door_open_since: alertState.doorOpenSince,
+    authorized_access_active: accessContext.authorizedAccessActive,
+    authorized_access_started_at: accessContext.authorizedAccessStartedAt,
+    tamper_grace_until: accessContext.tamperGraceUntil,
     alerts: [...new Set(alertState.candidates.map((alert) => alert.type))],
     alert_severity: summarizeSeverity(alertState.candidates),
     last_warning:
@@ -489,6 +518,11 @@ async function handleLockerAck(topic, messageBuffer, io) {
   };
   if (VALID_LOCK_STATES.includes(payload.lock_state)) {
     update.lock_state = payload.lock_state;
+    if (payload.lock_state === "unlocked") {
+      update.authorized_access_active = true;
+      update.authorized_access_started_at = new Date();
+      update.tamper_grace_until = null;
+    }
   }
 
   await LockerState.findOneAndUpdate({ locker_id: lockerId }, update, { new: true });
@@ -631,7 +665,8 @@ async function startMqttInfrastructure(config, io) {
     weakSignalRssi: config.weakSignalRssi,
     vibrationCriticalTotal: config.vibrationCriticalTotal,
     vibrationWindowSeconds: config.vibrationWindowSeconds,
-    alertDedupSeconds: config.alertDedupSeconds
+    alertDedupSeconds: config.alertDedupSeconds,
+    authorizedCloseGraceSeconds: config.authorizedCloseGraceSeconds
   };
 
   client.on("connect", () => {

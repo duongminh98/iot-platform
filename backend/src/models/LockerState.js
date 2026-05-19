@@ -85,6 +85,18 @@ const lockerStateSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    authorized_access_active: {
+      type: Boolean,
+      default: false
+    },
+    authorized_access_started_at: {
+      type: Date,
+      default: null
+    },
+    tamper_grace_until: {
+      type: Date,
+      default: null
+    },
     alerts: {
       type: [String],
       default: []
