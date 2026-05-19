@@ -2,6 +2,7 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <DHT.h>
 
 // ================= CẤU HÌNH WIFI & MQTT =================
 
@@ -29,6 +30,14 @@ const int PIN_VIBRATION = 22; // Cảm biến rung SW420
 const int PIN_FSR = 34;       // Cảm biến lực FSR 406
 const int PIN_DOOR = 26;      // Cảm biến cửa MC-38
 const int PIN_LOCK = 25;      // Relay điều khiển khóa K01
+
+#define DHTPIN 23
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+
+const String topic_temp = "locker/" + lockerId + "/temperature";
+float last_sent_temp = -999.0;
+unsigned long lastTempTime = 0;
 
 // ================= BIẾN TOÀN CỤC =================
 WiFiClientSecure espClient;
@@ -149,6 +158,7 @@ void setup() {
   // Attach interrupt cho chân rung
   attachInterrupt(digitalPinToInterrupt(PIN_VIBRATION), detectVibration, FALLING);
 
+  dht.begin();
   setup_wifi();
   
   // Fix chứng chỉ SSL cho ESP32 hoặc bỏ qua kiểm tra chứng chỉ (insecure)
@@ -166,6 +176,32 @@ void loop() {
 
   unsigned long now = millis();
   
+  // Logic nhiệt độ mỗi 10 giây
+  if (now - lastTempTime >= 10000) {
+    lastTempTime = now;
+    float temp = dht.readTemperature();
+    if (isnan(temp)) {
+      Serial.println("Lỗi: Không thể đọc dữ liệu từ cảm biến DHT11!");
+    } else {
+      if (temp != last_sent_temp) {
+        StaticJsonDocument<256> docTemp;
+        docTemp["temperature"] = temp;
+        docTemp["timestamp"] = now;
+        
+        char msgBuffer[256];
+        serializeJson(docTemp, msgBuffer);
+        
+        Serial.print("Publishing Temperature: ");
+        Serial.println(msgBuffer);
+        client.publish(topic_temp.c_str(), msgBuffer);
+        
+        last_sent_temp = temp;
+      } else {
+        Serial.println("Temperature unchanged, not sending.");
+      }
+    }
+  }
+
   // Mỗi 0.5 giây (500ms) kiểm tra và thực hiện in ra/gửi dữ liệu
   if (now - lastMsgTime >= 500) {
     lastMsgTime = now;
@@ -184,7 +220,7 @@ void loop() {
       // 3. Các cảm biến khác hardcode ở phase này
       doc["door"] = 0; 
       doc["has_package"] = 1; 
-      doc["temperature"] = 28.5; 
+      // doc["temperature"] = 28.5;  // Đã bỏ hardcode nhiệt độ 
       doc["fsr_raw"] = 2000;
       doc["fsr_percent"] = 50;
       doc["lock_state"] = "locked";

@@ -23,7 +23,8 @@ const forecastModelLabel = document.getElementById("forecastModelLabel");
 const state = {
   lockers: [],
   alerts: [],
-  selectedLockerId: null
+  selectedLockerId: null,
+  theftAlertUntil: 0
 };
 
 function formatDoor(value) {
@@ -239,17 +240,25 @@ function renderSelectedLocker(locker) {
   selectedLockerMeta.textContent =
     `Latest sample received at ${formatTime(locker.timestamp)}. Current operational state and recent history are shown here.`;
 
-  const alerts = Array.isArray(locker.alerts) && locker.alerts.length > 0 ? locker.alerts : ["normal"];
-  selectedLockerAlerts.innerHTML = alerts
-    .map((alert) => `<span class="alert-pill">${alert}</span>`)
-    .join("");
-
+  if (locker.locker_id === 1) {
+    const isTheft = state.lastVibCount > 150;
+    // Lấy số đếm tạm thời từ state để hiển thị ngay (nếu có)
+    const countText = typeof state.lastVibCount === "number" ? ` (${state.lastVibCount})` : "";
+    const text = isTheft ? `Theft detected${countText}` : `Bình thường 1${countText}`;
+    const bg = isTheft ? "#ef4444" : "#10b981";
+    selectedLockerAlerts.innerHTML = `<span class="alert-pill" style="background: ${bg}; color: white; font-weight: bold; border: none;">${text}</span>`;
+  } else {
+    const alerts = Array.isArray(locker.alerts) && locker.alerts.length > 0 ? locker.alerts : ["normal"];
+    selectedLockerAlerts.innerHTML = alerts
+      .map((alert) => `<span class="alert-pill">${alert}</span>`)
+      .join("");
+  }
   selectedLockerStats.innerHTML = [
     { label: "Temperature", value: formatTemperature(locker.temperature) },
     { label: "Lock state", value: formatLock(locker.lock_state) },
     { label: "Door state", value: formatDoor(locker.door) },
     { label: "Package status", value: formatPackage(locker.has_package) },
-    { label: "Tỉ lệ có trộm (%)", value: formatPercent(locker.vibration_score) },
+    { label: "ĐIểm độ rung (%)", value: formatPercent(locker.vibration_score) },
     { label: "FSR pressure", value: formatPercent(locker.fsr_percent) },
     { label: "Signal strength", value: formatSignal(locker.rssi) },
     { label: "Security severity", value: formatSeverity(locker.alert_severity) },
@@ -358,9 +367,9 @@ function renderTelemetry(history, locker) {
         <polyline points="${temperatures.map((value, index) => `${x(index)},${tempY(value)}`).join(" ")}" class="chart-line temperature" />
         <polyline points="${fsr.map((value, index) => `${x(index)},${fsrY(value)}`).join(" ")}" class="chart-line fsr" />
         ${samples.map((entry, index) => entry.vibration_score >= 70
-          ? `<circle cx="${x(index)}" cy="${fsrY(entry.vibration_score)}" r="6" class="chart-point danger" />`
-          : ""
-        ).join("")}
+    ? `<circle cx="${x(index)}" cy="${fsrY(entry.vibration_score)}" r="6" class="chart-point danger" />`
+    : ""
+  ).join("")}
       </svg>
     </div>
     <div class="axis-row"><span>${labels[0]}</span><span>${labels[labels.length - 1]}</span></div>
@@ -410,8 +419,8 @@ function renderAlerts(alerts) {
       <div class="timeline-meta">
         <time>${formatTime(alert.timestamp)}</time>
         ${alert.acknowledged
-          ? '<em>Acknowledged</em>'
-          : `<button type="button" data-ack-alert="${alert._id}">Acknowledge</button>`}
+      ? '<em>Acknowledged</em>'
+      : `<button type="button" data-ack-alert="${alert._id}">Acknowledge</button>`}
       </div>
     </article>
   `).join("") : '<div class="empty-state">No alerts match the current filters.</div>';
@@ -428,6 +437,20 @@ async function fetchJson(path, options) {
 
 async function loadHistory(lockerId) {
   const history = await fetchJson(`/history/${lockerId}?limit=24`);
+
+  if (lockerId === 1) {
+    // Chỉ đếm các rung động trong vòng 15 giây qua để tránh kẹt mãi mãi (do ESP chỉ gửi khi có rung)
+    const recentHistory = history.filter(h => (Date.now() - new Date(h.timestamp).getTime()) <= 15000);
+    const totalVibrations = recentHistory.reduce((sum, h) => sum + (h.vibration_count || 0), 0);
+    state.lastVibCount = totalVibrations;
+
+    const isTheft = totalVibrations > 150;
+
+    const text = isTheft ? `Theft detected (${totalVibrations})` : `Bình thường 1 (${totalVibrations})`;
+    const bg = isTheft ? "#ef4444" : "#10b981";
+    selectedLockerAlerts.innerHTML = `<span class="alert-pill" style="background: ${bg}; color: white; font-weight: bold; border: none;">${text}</span>`;
+  }
+
   renderHistory(history);
   renderTelemetry(
     history,
@@ -630,3 +653,8 @@ socket.on("command_updated", () => {
 });
 
 refreshDashboard();
+
+// Tự động reload dashboard mỗi 4 giây
+setInterval(() => {
+  refreshDashboard();
+}, 4000);

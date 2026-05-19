@@ -13,27 +13,12 @@ services:
     ports:
       - "3000:3000"
       - "1883:1883"
+    env_file:
+      - .env
     environment:
-      - PORT=3000
-      - MQTT_PORT=1883
       - MONGODB_URI=mongodb://mongo:27017/smart_locker_iot
-      - PACKAGE_STALE_SECONDS=30
-      - DOOR_OPEN_STALE_SECONDS=20
-      - HISTORY_LIMIT=100
     depends_on:
       - mongo
-    restart: always
-
-  simulator:
-    build: .
-    container_name: iot-simulator
-    command: npm run start:simulator
-    environment:
-      - SIMULATOR_BROKER_URL=mqtt://backend:1883
-      - SIMULATOR_LOCKER_IDS=1,2,3
-      - SIMULATOR_INTERVAL_MS=5000
-    depends_on:
-      - backend
     restart: always
 
 volumes:

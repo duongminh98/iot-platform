@@ -5,7 +5,7 @@ require("dotenv").config({
   path: path.resolve(__dirname, "../.env")
 });
 
-const brokerUrl = process.env.SIMULATOR_BROKER_URL || process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
+const brokerUrl = process.env.SIMULATOR_BROKER_URL || process.env.MQTT_URL || "mqtts://dd793875ef39402c8a2f8dc020346b51.s1.eu.hivemq.cloud:8883";
 const intervalMs = Number(process.env.SIMULATOR_INTERVAL_MS || 5000);
 const lockerIds = (process.env.SIMULATOR_LOCKER_IDS || "1,2,3")
   .split(",")

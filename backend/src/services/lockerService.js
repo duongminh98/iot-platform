@@ -23,6 +23,11 @@ function parseAckTopic(topic) {
   return match ? Number(match[1]) : null;
 }
 
+function parseTempTopic(topic) {
+  const match = /^locker\/(\d+)\/temperature$/.exec(topic);
+  return match ? Number(match[1]) : null;
+}
+
 function isNumberOrNull(value) {
   return typeof value === "number" || value === null || typeof value === "undefined";
 }
@@ -393,6 +398,43 @@ async function handleLockerAck(topic, messageBuffer, io) {
   }
 }
 
+async function handleLockerTemp(topic, messageBuffer, io) {
+  const lockerId = parseTempTopic(topic);
+  if (lockerId === null) return;
+
+  let payload;
+  try {
+    payload = JSON.parse(messageBuffer.toString("utf8"));
+  } catch (error) {
+    console.error(`Invalid JSON on topic ${topic}:`, error.message);
+    return;
+  }
+
+  if (typeof payload.temperature !== "number") return;
+
+  const state = await LockerState.findOneAndUpdate(
+    { locker_id: lockerId },
+    { temperature: payload.temperature, timestamp: new Date() },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  const reading = await LockerReading.create({
+    locker_id: lockerId,
+    temperature: payload.temperature,
+    door: state.door ?? 0,
+    has_package: state.has_package ?? 0,
+    lock_state: state.lock_state ?? "unknown",
+    timestamp: new Date()
+  });
+
+  if (io) {
+    io.emit("telemetry_update", {
+      reading,
+      state
+    });
+  }
+}
+
 function startBroker(port) {
   const broker = Aedes();
   const server = net.createServer(broker.handle);
@@ -443,7 +485,7 @@ async function startMqttInfrastructure(config, io) {
 
   client.on("connect", () => {
     console.log("Backend MQTT client connected.");
-    client.subscribe(["locker/+/data", "locker/+/ack"], (error) => {
+    client.subscribe(["locker/+/data", "locker/+/ack", "locker/+/temperature"], (error) => {
       if (error) {
         console.error("Failed to subscribe to locker topics:", error.message);
       }
@@ -456,6 +498,8 @@ async function startMqttInfrastructure(config, io) {
         await handleLockerData(topic, message, thresholds, io, config);
       } else if (parseAckTopic(topic) !== null) {
         await handleLockerAck(topic, message, io);
+      } else if (parseTempTopic(topic) !== null) {
+        await handleLockerTemp(topic, message, io);
       }
     } catch (error) {
       console.error(`Failed to process topic ${topic}:`, error.message);
