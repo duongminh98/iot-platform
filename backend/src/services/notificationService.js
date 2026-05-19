@@ -5,6 +5,7 @@ const MobileDevice = require("../models/MobileDevice");
 
 let firebaseApp = null;
 const lastNotificationAtByKey = new Map();
+const FCM_ALERT_TYPES = new Set(["theft_alarm", "package_door_open_too_long"]);
 
 function loadServiceAccount(config) {
   if (config.firebaseServiceAccountBase64) {
@@ -37,9 +38,14 @@ function getFirebaseApp(config) {
 }
 
 function buildMessagePayload(alert) {
+  const title =
+    alert.type === "package_door_open_too_long"
+      ? `Locker ${alert.locker_id} package door alert`
+      : `Locker ${alert.locker_id} theft detection`;
+
   return {
     notification: {
-      title: `Locker ${alert.locker_id} theft detection`,
+      title,
       body: alert.message
     },
     data: {
@@ -63,7 +69,7 @@ async function sendTopicNotification(config, alert) {
   const app = getFirebaseApp(config);
   if (!app) {
     console.log("[FCM skipped] Firebase service account is not configured.");
-    return;
+    return null;
   }
 
   const messageId = await admin.messaging(app).send({
@@ -71,6 +77,7 @@ async function sendTopicNotification(config, alert) {
     topic: config.fcmDemoTopic || "locker_1_theft"
   });
   console.log(`[FCM sent] topic=${config.fcmDemoTopic || "locker_1_theft"} alert=${alert.type} messageId=${messageId}`);
+  return messageId;
 }
 
 async function sendTokenNotifications(config, alert) {
@@ -94,17 +101,17 @@ async function sendTokenNotifications(config, alert) {
   );
 }
 
-async function notifyCriticalAlert(config, alert) {
+function reserveCriticalAlertNotification(config, alert) {
   if (alert.severity !== "critical") {
-    return;
+    return false;
   }
 
-  if (alert.type !== "theft_alarm") {
-    return;
+  if (!FCM_ALERT_TYPES.has(alert.type)) {
+    return false;
   }
 
   if (config.mobileDemoLockerId && alert.locker_id !== config.mobileDemoLockerId) {
-    return;
+    return false;
   }
 
   const throttleSeconds = Number(config.fcmThrottleSeconds || 20);
@@ -115,18 +122,37 @@ async function notifyCriticalAlert(config, alert) {
     console.log(
       `[FCM skipped] ${alert.type} for locker ${alert.locker_id}; throttled for ${throttleSeconds}s.`
     );
-    return;
+    return false;
   }
 
+  lastNotificationAtByKey.set(throttleKey, now);
+  return true;
+}
+
+async function sendReservedCriticalAlertNotification(config, alert) {
   try {
-    await sendTopicNotification(config, alert);
+    const topicMessageId = await sendTopicNotification(config, alert);
+    if (!topicMessageId) {
+      return false;
+    }
     await sendTokenNotifications(config, alert);
-    lastNotificationAtByKey.set(throttleKey, now);
+    return true;
   } catch (error) {
     console.error("Failed to send FCM notification:", error.message);
+    return false;
   }
 }
 
+async function notifyCriticalAlert(config, alert) {
+  if (!reserveCriticalAlertNotification(config, alert)) {
+    return false;
+  }
+
+  return sendReservedCriticalAlertNotification(config, alert);
+}
+
 module.exports = {
+  reserveCriticalAlertNotification,
+  sendReservedCriticalAlertNotification,
   notifyCriticalAlert
 };

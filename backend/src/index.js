@@ -27,6 +27,7 @@ async function main() {
       mqttPort: config.mqttPort,
       packageStaleSeconds: config.packageStaleSeconds,
       doorOpenStaleSeconds: config.doorOpenStaleSeconds,
+      packageDoorOpenCriticalSeconds: config.packageDoorOpenCriticalSeconds,
       vibrationCriticalTotal: config.vibrationCriticalTotal,
       vibrationWindowSeconds: config.vibrationWindowSeconds,
       fsrDropCriticalPercent: config.fsrDropCriticalPercent,

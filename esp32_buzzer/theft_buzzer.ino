@@ -1,87 +1,133 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#include <ArduinoJson.h>
 
-// --- CẤU HÌNH WIFI & MQTT ---
-const char* ssid = "nhaso9"; // Thay bằng host HiveMQ của bạn
+// Wi-Fi
+const char* ssid = "nhaso9";
 const char* password = "910082023";
-// HiveMQ Cloud thông thường dùng port 8883 (TLS) nhưng ở đây code mẫu dùng 1883, tôi sẽ giữ nguyên theo mẫu của user (user có thể sửa lại)
-const char* mqtt_server = "dd793875ef39402c8a2f8dc020346b51.s1.eu.hivemq.cloud"; 
-const char* mqtt_user = "nhom7";                 
-const char* mqtt_password = "Nhom7nhom7";             
+
+// HiveMQ Cloud
+const char* mqtt_server = "dd793875ef39402c8a2f8dc020346b51.s1.eu.hivemq.cloud";
 const int mqtt_port = 8883;
-const char* mqtt_topic = "iot/system/security";
+const char* mqtt_user = "nhom7";
+const char* mqtt_password = "Nhom7nhom7";
 
-// --- CẤU HÌNH PHẦN CỨNG ---
-const int BUZZER_PIN = 25; 
+// This ESP32 is a dedicated alarm device for locker 1.
+const int DEMO_LOCKER_ID = 1;
+const char* SECURITY_TOPIC = "iot/system/security";
 
-WiFiClientSecure espClient; // Đổi sang WiFiClientSecure cho HiveMQ
+// Hardware
+const int BUZZER_PIN = 25;
+const unsigned long DEFAULT_ALARM_DURATION_MS = 10000;
+
+WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
-// --- CÁC BIẾN TRẠNG THÁI ---
-bool isAlarmActive = false;
-unsigned long alarmStartTime = 0;
-const unsigned long ALARM_DURATION = 10000; // 10 giây (10000 ms)
+bool alarmActive = false;
+unsigned long alarmStartMs = 0;
+unsigned long alarmDurationMs = DEFAULT_ALARM_DURATION_MS;
 
-void setup_wifi() {
-  delay(10);
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
+void startAlarm(unsigned long durationMs) {
+  if (alarmActive) {
+    return;
+  }
 
+  alarmDurationMs = durationMs > 0 ? durationMs : DEFAULT_ALARM_DURATION_MS;
+  alarmStartMs = millis();
+  alarmActive = true;
+
+  // Stop receiving MQTT packets while the alarm is locked for 10 seconds.
+  if (client.connected()) {
+    client.disconnect();
+  }
+
+  digitalWrite(BUZZER_PIN, HIGH);
+  Serial.println("THEFT ALARM LOCKED: buzzer ON, MQTT disabled.");
+}
+
+void stopAlarmIfExpired() {
+  if (!alarmActive) {
+    return;
+  }
+
+  if (millis() - alarmStartMs < alarmDurationMs) {
+    return;
+  }
+
+  digitalWrite(BUZZER_PIN, LOW);
+  alarmActive = false;
+  Serial.println("THEFT ALARM FINISHED: buzzer OFF, MQTT can reconnect.");
+}
+
+void setupWifi() {
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
+  Serial.print("Connecting Wi-Fi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
 
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.print("IP address: ");
+  Serial.println();
+  Serial.print("Wi-Fi connected. IP: ");
   Serial.println(WiFi.localIP());
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  
-  String message = "";
-  for (int i = 0; i < length; i++) {
-    message += (char)payload[i];
+void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+  if (alarmActive) {
+    return;
   }
-  Serial.println(message);
 
-  // Kiểm tra nếu payload chứa tín hiệu cảnh báo trộm
-  if (message.indexOf("theft") >= 0) {
-    Serial.println("⚠️ THEFT DETECTED! Disconnecting MQTT and starting alarm...");
-    
-    // 1. Tạm thời ngắt kết nối MQTT để tránh nhận trùng tin nhắn liên tục
-    client.disconnect(); 
-    
-    // 2. Kích hoạt trạng thái còi hú
-    isAlarmActive = true;
-    alarmStartTime = millis();
-    digitalWrite(BUZZER_PIN, HIGH); // Bật còi (Sửa thành tone() nếu dùng còi passive)
+  if (String(topic) != SECURITY_TOPIC) {
+    return;
   }
+
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, payload, length);
+  if (error) {
+    Serial.print("Ignored invalid security payload: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  const char* status = doc["status"] | "";
+  const char* alertType = doc["alert_type"] | "";
+  const int lockerId = doc["locker_id"] | -1;
+  const bool fcmRequested = doc["fcm_requested"] | false;
+  const unsigned long alarmMs = doc["alarm_ms"] | DEFAULT_ALARM_DURATION_MS;
+
+  const bool shouldAlarm =
+    strcmp(status, "theft") == 0 &&
+    strcmp(alertType, "theft_alarm") == 0 &&
+    lockerId == DEMO_LOCKER_ID &&
+    fcmRequested;
+
+  if (!shouldAlarm) {
+    Serial.println("Ignored security payload that does not match locker 1 theft_alarm with fcm_requested=true.");
+    return;
+  }
+
+  Serial.println("Locker 1 theft_alarm confirmed by backend FCM trigger.");
+  startAlarm(alarmMs);
 }
 
-void reconnect() {
-  // Chỉ thực hiện reconnect khi còi KHÔNG ĐANG HÚ
-  while (!client.connected() && !isAlarmActive) {
-    Serial.print("Attempting MQTT connection...");
-    String clientId = "ESP32_Buzzer_Client_";
+void reconnectMqtt() {
+  while (!client.connected() && !alarmActive) {
+    String clientId = "ESP32_Buzzer_Locker1_";
     clientId += String(random(0, 0xffff), HEX);
-    
+
+    Serial.print("Connecting MQTT...");
     if (client.connect(clientId.c_str(), mqtt_user, mqtt_password)) {
       Serial.println("connected");
-      client.subscribe(mqtt_topic);
-      Serial.print("Subscribed to topic: ");
-      Serial.println(mqtt_topic);
+      client.subscribe(SECURITY_TOPIC, 1);
+      Serial.print("Subscribed: ");
+      Serial.println(SECURITY_TOPIC);
     } else {
-      Serial.print("failed, rc=");
+      Serial.print("failed rc=");
       Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
+      Serial.println("; retry in 5s");
       delay(5000);
     }
   }
@@ -90,32 +136,24 @@ void reconnect() {
 void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW); // Đảm bảo ban đầu còi tắt
+  digitalWrite(BUZZER_PIN, LOW);
 
-  setup_wifi();
-  
-  // Set insecure cho HiveMQ TLS
+  setupWifi();
+
   espClient.setInsecure();
-
   client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
+  client.setCallback(onMqttMessage);
 }
 
 void loop() {
-  // Trường hợp hệ thống đang trong trạng thái hú còi báo động
-  if (isAlarmActive) {
-    // Kiểm tra xem đã đủ 10 giây chưa
-    if (millis() - alarmStartTime >= ALARM_DURATION) {
-      Serial.println("✅ Alarm duration finished. Turning off buzzer and reconnecting to MQTT...");
-      digitalWrite(BUZZER_PIN, LOW); // Tắt còi
-      isAlarmActive = false;         // Giải phóng trạng thái báo động
-      // Vòng lặp loop tiếp theo sẽ tự động rơi vào nhánh else bên dưới để kết nối lại MQTT
-    }
-  } else {
-    // Trạng thái bình thường: Duy trì kết nối MQTT và lắng nghe dữ liệu
-    if (!client.connected()) {
-      reconnect();
-    }
-    client.loop();
+  if (alarmActive) {
+    stopAlarmIfExpired();
+    return;
   }
+
+  if (!client.connected()) {
+    reconnectMqtt();
+  }
+
+  client.loop();
 }

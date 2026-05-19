@@ -6,7 +6,10 @@ const Alert = require("../models/Alert");
 const Command = require("../models/Command");
 const LockerReading = require("../models/LockerReading");
 const LockerState = require("../models/LockerState");
-const { notifyCriticalAlert } = require("./notificationService");
+const {
+  reserveCriticalAlertNotification,
+  sendReservedCriticalAlertNotification
+} = require("./notificationService");
 
 const vibrationQueues = {};
 
@@ -143,9 +146,13 @@ function buildAlertCandidates(previousState, reading, thresholds) {
   const isLocked = reading.lock_state === "locked";
   const vibrationScore = buildVibrationScore(reading, thresholds);
   const totalVibrations = updateVibrationWindow(reading.locker_id, reading, thresholds);
+  const effectiveHasPackage =
+    reading.has_package === null || typeof reading.has_package === "undefined"
+      ? previousState?.has_package ?? null
+      : reading.has_package;
 
   let packageSince = null;
-  if (reading.has_package === 1) {
+  if (effectiveHasPackage === 1) {
     packageSince =
       previousState?.has_package === 1 && previousState.package_since
         ? previousState.package_since
@@ -169,7 +176,18 @@ function buildAlertCandidates(previousState, reading, thresholds) {
         ? previousState.door_open_since
         : timestamp;
     const doorOpenAgeSeconds = Math.floor((timestamp - doorOpenSince) / 1000);
-    if (doorOpenAgeSeconds >= thresholds.doorOpenStaleSeconds) {
+    if (effectiveHasPackage === 1 && doorOpenAgeSeconds >= thresholds.packageDoorOpenCriticalSeconds) {
+      addAlert(
+        candidates,
+        "package_door_open_too_long",
+        "critical",
+        `Locker ${reading.locker_id} has a package and the door has been open for ${doorOpenAgeSeconds}s.`,
+        {
+          door_open_age_seconds: doorOpenAgeSeconds,
+          package_present: true
+        }
+      );
+    } else if (doorOpenAgeSeconds >= thresholds.doorOpenStaleSeconds) {
       addAlert(
         candidates,
         "door_open_too_long",
@@ -280,6 +298,23 @@ function summarizeSeverity(candidates) {
   );
 }
 
+function publishBuzzerAlarm(mqttClient, alert) {
+  if (!mqttClient || alert.type !== "theft_alarm") {
+    return;
+  }
+
+  mqttClient.publish("iot/system/security", JSON.stringify({
+    status: "theft",
+    alert_type: alert.type,
+    locker_id: alert.locker_id,
+    severity: alert.severity,
+    fcm_requested: true,
+    alarm_ms: 10000,
+    vibration_total: alert.metadata?.vibration_total ?? null,
+    timestamp: alert.timestamp
+  }));
+}
+
 async function createDedupedAlerts(reading, candidates, thresholds, io, config, mqttClient) {
   const createdAlerts = [];
   const dedupAfter = new Date(Date.now() - thresholds.alertDedupSeconds * 1000);
@@ -292,14 +327,18 @@ async function createDedupedAlerts(reading, candidates, thresholds, io, config, 
     }).lean();
 
     if (duplicate) {
-      await notifyCriticalAlert(config, {
+      const duplicateAlert = {
         locker_id: reading.locker_id,
         type: candidate.type,
         severity: candidate.severity,
         message: candidate.message,
         metadata: candidate.metadata,
         timestamp: reading.timestamp
-      });
+      };
+      if (reserveCriticalAlertNotification(config, duplicateAlert)) {
+        publishBuzzerAlarm(mqttClient, duplicateAlert);
+        await sendReservedCriticalAlertNotification(config, duplicateAlert);
+      }
       continue;
     }
 
@@ -317,14 +356,10 @@ async function createDedupedAlerts(reading, candidates, thresholds, io, config, 
       io.emit("alert_created", alert);
     }
 
-    if ((alert.type === "theft_alarm" || alert.type === "tamper_detected") && mqttClient) {
-      mqttClient.publish("iot/system/security", JSON.stringify({
-        status: "theft",
-        message: alert.message
-      }));
+    if (reserveCriticalAlertNotification(config, alert)) {
+      publishBuzzerAlarm(mqttClient, alert);
+      await sendReservedCriticalAlertNotification(config, alert);
     }
-
-    await notifyCriticalAlert(config, alert);
   }
 
   return createdAlerts;
@@ -591,6 +626,7 @@ async function startMqttInfrastructure(config, io) {
   const thresholds = {
     packageStaleSeconds: config.packageStaleSeconds,
     doorOpenStaleSeconds: config.doorOpenStaleSeconds,
+    packageDoorOpenCriticalSeconds: config.packageDoorOpenCriticalSeconds,
     fsrDropCriticalPercent: config.fsrDropCriticalPercent,
     weakSignalRssi: config.weakSignalRssi,
     vibrationCriticalTotal: config.vibrationCriticalTotal,
