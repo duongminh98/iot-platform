@@ -5,7 +5,7 @@ const Command = require("../models/Command");
 const LockerReading = require("../models/LockerReading");
 const LockerState = require("../models/LockerState");
 const MobileDevice = require("../models/MobileDevice");
-const { publishCommand } = require("../services/lockerService");
+const { publishCommand, clearVibrationQueue } = require("../services/lockerService");
 const { buildForecast, getModelEvaluation } = require("../services/occupancyForecastService");
 
 function readLockerId(value) {
@@ -125,6 +125,26 @@ function createLockerRouter(historyLimit, mqttClient, config) {
         requested_by: request.body?.requested_by || request.get("x-user-id") || "demo"
       });
       response.status(202).json(command);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/locker/:id/clear-alarm", async (request, response, next) => {
+    try {
+      const lockerId = readLockerId(request.params.id);
+      
+      // Reset the vibration queue
+      clearVibrationQueue(lockerId);
+      
+      // Reset locker state alert severity
+      const state = await LockerState.findOneAndUpdate(
+        { locker_id: lockerId },
+        { alert_severity: "normal", last_warning: null },
+        { new: true }
+      );
+      
+      response.status(200).json({ message: "Alarm cleared", state });
     } catch (error) {
       next(error);
     }

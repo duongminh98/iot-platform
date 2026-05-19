@@ -141,21 +141,18 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 void setup() {
   Serial.begin(115200);
-
-  // Setup các chân GPIO
-  pinMode(PIN_VIBRATION, INPUT);
-  pinMode(PIN_FSR, INPUT);
-  pinMode(PIN_DOOR, INPUT_PULLUP);
   pinMode(PIN_LOCK, OUTPUT);
-  digitalWrite(PIN_LOCK, LOW); // Mặc định khóa đóng
-
-  // Gắn ngắt (interrupt) cho cảm biến rung để không bỏ sót tín hiệu chớp nhoáng
-  attachInterrupt(digitalPinToInterrupt(PIN_VIBRATION), detectVibration, RISING);
+  digitalWrite(PIN_LOCK, LOW);
+  pinMode(PIN_DOOR, INPUT_PULLUP);
+  pinMode(PIN_VIBRATION, INPUT_PULLUP);
+  
+  // Attach interrupt cho chân rung
+  attachInterrupt(digitalPinToInterrupt(PIN_VIBRATION), detectVibration, FALLING);
 
   setup_wifi();
   
-  // HiveMQ Cloud sử dụng TLS, bỏ qua xác thực chứng chỉ (Insecure) cho tiện test
-  espClient.setInsecure(); 
+  // Fix chứng chỉ SSL cho ESP32 hoặc bỏ qua kiểm tra chứng chỉ (insecure)
+  espClient.setInsecure();
   
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
@@ -169,65 +166,44 @@ void loop() {
 
   unsigned long now = millis();
   
-  // Tính toán thời gian rung liên tục (giữa nhịp đầu và nhịp cuối)
-  unsigned long vibrationDuration = 0;
-  if (vibrationCount > 1) {
-    vibrationDuration = lastVibrationTime - vibrationStartTime;
-  }
-
-  // Gửi khẩn cấp nếu rung lắc kéo dài từ 10 giây trở lên và vẫn đang tiếp diễn (nhịp cuối cách đây < 2s)
-  bool sendUrgent = (vibrationDuration >= 7000 && (now - lastVibrationTime < 2000)); 
-  
-  if (now - lastMsgTime > MSG_INTERVAL || sendUrgent) {
+  // Mỗi 0.5 giây (500ms) kiểm tra và thực hiện in ra/gửi dữ liệu
+  if (now - lastMsgTime >= 500) {
     lastMsgTime = now;
 
-    // Đọc cảm biến cửa (MC-38: 1 = mở, 0 = đóng)
-    int doorState = digitalRead(PIN_DOOR);
-    
-    // Đọc cảm biến FSR (Dải ADC ESP32: 0 - 4095)
-    int fsrRaw = analogRead(PIN_FSR);
-    int fsrPercent = map(fsrRaw, 0, 4095, 0, 100);
+    // Chỉ gửi dữ liệu lên nếu có rung lắc (vibration = 1)
+    if (vibrationCount > 0) {
+      StaticJsonDocument<512> doc;
+      
+      // 1. Dùng logic của millis trong arduino để đếm làm timestamp
+      doc["timestamp"] = now;
+      
+      // 2. Dữ liệu rung động
+      doc["vibration"] = 1;
+      doc["vibration_count"] = vibrationCount;
+      
+      // 3. Các cảm biến khác hardcode ở phase này
+      doc["door"] = 0; 
+      doc["has_package"] = 1; 
+      doc["temperature"] = 28.5; 
+      doc["fsr_raw"] = 2000;
+      doc["fsr_percent"] = 50;
+      doc["lock_state"] = "locked";
+      
+      doc["rssi"] = WiFi.RSSI();
+      doc["uptime_ms"] = now;
 
-    // Tính toán điểm số trộm dựa trên thời gian rung liên tục (tối đa 10s = 100%)
-    int vibScore = min((int)(vibrationDuration / 100), 100); 
+      // Gửi message lên MQTT
+      char msgBuffer[512];
+      serializeJson(doc, msgBuffer);
+      
+      Serial.print("Publishing (Vibration Detected): ");
+      Serial.println(msgBuffer);
+      client.publish(topic_data.c_str(), msgBuffer);
 
-    // Nếu là gửi khẩn cấp do rung lắc 10s, ép điểm số lên 100
-    if (sendUrgent) {
-      vibScore = 100;
-    } 
-
-    // Đóng gói JSON
-    StaticJsonDocument<512> doc;
-    doc["door"] = (doorState == HIGH) ? 1 : 0;
-    doc["has_package"] = (fsrPercent > 20) ? 1 : 0; // Giả lập có gói hàng nếu có áp lực
-    
-    // Gắn sẵn một giá trị nhiệt độ (Vì chưa cắm DHT nên fix 28.5 hoặc null)
-    doc["temperature"] = 28.5; 
-
-    // Dữ liệu rung động
-    doc["vibration"] = (vibrationCount > 0) ? 1 : 0;
-    doc["vibration_count"] = vibrationCount;
-    doc["vibration_score"] = vibScore;
-    
-    // Dữ liệu FSR
-    doc["fsr_raw"] = fsrRaw;
-    doc["fsr_percent"] = fsrPercent;
-
-    doc["lock_state"] = "locked";
-    doc["rssi"] = WiFi.RSSI();
-    doc["uptime_ms"] = millis();
-
-    // Gửi message lên MQTT
-    char msgBuffer[512];
-    serializeJson(doc, msgBuffer);
-    
-    Serial.print("Publishing: ");
-    Serial.println(msgBuffer);
-    client.publish(topic_data.c_str(), msgBuffer);
-
-    // CHỈ Reset bộ đếm rung nếu là gửi khẩn cấp (đã đạt 10s) hoặc đã hết rung (qua 2 giây không có nhịp mới)
-    if (sendUrgent || (now - lastVibrationTime >= 2000)) {
+      // Reset bộ đếm rung sau khi đã gửi
       vibrationCount = 0;
-    } 
+    } else {
+      Serial.println("No vibration, skipped sending.");
+    }
   }
 }

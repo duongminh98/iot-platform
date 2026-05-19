@@ -8,6 +8,8 @@ const LockerReading = require("../models/LockerReading");
 const LockerState = require("../models/LockerState");
 const { notifyCriticalAlert } = require("./notificationService");
 
+const vibrationQueues = {};
+
 const VALID_LOCK_STATES = ["locked", "unlocked", "unknown"];
 const VALID_ACTIONS = ["unlock", "lock", "beep", "calibrate_fsr"];
 
@@ -70,6 +72,7 @@ function normalizePayload(payload) {
   }
 
   return {
+    device_timestamp: normalizeOptionalNumber(payload, "timestamp"),
     temperature: normalizeOptionalNumber(payload, "temperature"),
     door: payload.door,
     has_package: normalizeOptionalBit(payload, "has_package"),
@@ -154,18 +157,29 @@ function buildAlertCandidates(previousState, reading, thresholds) {
     );
   }
 
-  if (
-    reading.lock_state === "locked" &&
-    typeof reading.vibration_score === "number" &&
-    reading.vibration_score >= thresholds.vibrationCriticalScore
-  ) {
-    addAlert(
-      candidates,
-      "tamper_vibration",
-      "critical",
-      `Locker ${reading.locker_id} detected strong vibration while locked.`,
-      { vibration_score: reading.vibration_score }
-    );
+  // Core Logic for Vibration Theft Alarm (PRD)
+  if (reading.vibration === 1 && typeof reading.device_timestamp === "number") {
+    if (!vibrationQueues[reading.locker_id]) {
+      vibrationQueues[reading.locker_id] = [];
+    }
+    const q = vibrationQueues[reading.locker_id];
+    q.push(reading.device_timestamp);
+    if (q.length > 10) {
+      q.shift();
+    }
+
+    if (q.length === 10) {
+      const deltaT = q[9] - q[0];
+      if (deltaT <= 10000) {
+        addAlert(
+          candidates,
+          "theft_alarm",
+          "critical",
+          `Locker ${reading.locker_id} detected continuous vibration (10 times in ${deltaT}ms).`,
+          { delta_t_ms: deltaT }
+        );
+      }
+    }
   }
 
   if (reading.lock_state === "locked" && reading.door === 1) {
@@ -511,7 +525,14 @@ async function publishCommand(client, config, lockerId, input) {
   return command;
 }
 
+function clearVibrationQueue(lockerId) {
+  if (vibrationQueues[lockerId]) {
+    vibrationQueues[lockerId] = [];
+  }
+}
+
 module.exports = {
   publishCommand,
-  startMqttInfrastructure
+  startMqttInfrastructure,
+  clearVibrationQueue
 };
