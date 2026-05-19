@@ -468,10 +468,10 @@ async function handleLockerFsr(topic, messageBuffer, io) {
 
   if (typeof payload.force_value !== "number") return;
 
-  // Xử lý ML: Quy đổi giá trị ADC (0-4095) thành % và nhãn has_package
-  // Giả sử: ngưỡng > 500 là có đồ (1), ngược lại là không có (0)
-  const fsr_percent = Math.min(100, Math.round((payload.force_value / 4095) * 100));
-  const has_package = payload.force_value > 500 ? 1 : 0;
+  // Xử lý ML: Quy đổi giá trị ADC (0-4095) thành % lực nén (ADC càng nhỏ lực càng mạnh)
+  // Theo yêu cầu: FSR < 4000 là có đồ (1), ngược lại là không (0)
+  const fsr_percent = Math.max(0, 100 - Math.round((payload.force_value / 4095) * 100));
+  const has_package = payload.force_value < 4000 ? 1 : 0;
 
   const state = await LockerState.findOneAndUpdate(
     { locker_id: lockerId },

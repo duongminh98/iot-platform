@@ -44,6 +44,10 @@ async function notifyCriticalAlert(config, alert) {
     return;
   }
 
+  if (config.mobileDemoLockerId && alert.locker_id !== config.mobileDemoLockerId) {
+    return;
+  }
+
   const devices = await MobileDevice.find({ enabled: true }).lean();
   await Promise.all(
     devices.map(async (device) => {

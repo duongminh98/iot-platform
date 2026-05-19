@@ -181,7 +181,7 @@ function renderLockers(lockers) {
             </div>
             <div>
               <dt>Rung bất thường</dt>
-              <dd>${formatPercent(locker.vibration_score)}</dd>
+              <dd>${locker.vibration_count ?? 0}</dd>
             </div>
             <div>
               <dt>FSR</dt>
@@ -218,7 +218,7 @@ function renderHistory(history) {
           <td>${formatDoor(entry.door)}</td>
           <td>${formatPackage(entry.has_package)}</td>
           <td>${formatLock(entry.lock_state)}</td>
-          <td>${formatPercent(entry.vibration_score)}</td>
+          <td>${entry.vibration_count ?? 0}</td>
           <td>${formatPercent(entry.fsr_percent)}</td>
         </tr>
       `
@@ -258,7 +258,7 @@ function renderSelectedLocker(locker) {
     { label: "Lock state", value: formatLock(locker.lock_state) },
     { label: "Door state", value: formatDoor(locker.door) },
     { label: "Package status", value: formatPackage(locker.has_package) },
-    { label: "ĐIểm độ rung (%)", value: formatPercent(locker.vibration_score) },
+    { label: "Độ rung (Lần)", value: locker.vibration_count ?? 0 },
     { label: "FSR pressure", value: formatPercent(locker.fsr_percent) },
     { label: "Signal strength", value: formatSignal(locker.rssi) },
     { label: "Security severity", value: formatSeverity(locker.alert_severity) },
@@ -366,8 +366,8 @@ function renderTelemetry(history, locker) {
         <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="chart-grid-line" />
         <polyline points="${temperatures.map((value, index) => `${x(index)},${tempY(value)}`).join(" ")}" class="chart-line temperature" />
         <polyline points="${fsr.map((value, index) => `${x(index)},${fsrY(value)}`).join(" ")}" class="chart-line fsr" />
-        ${samples.map((entry, index) => entry.vibration_score >= 70
-    ? `<circle cx="${x(index)}" cy="${fsrY(entry.vibration_score)}" r="6" class="chart-point danger" />`
+        ${samples.map((entry, index) => (entry.vibration_count ?? 0) >= 10
+    ? `<circle cx="${x(index)}" cy="${fsrY(entry.vibration_count)}" r="6" class="chart-point danger" />`
     : ""
   ).join("")}
       </svg>
@@ -378,7 +378,7 @@ function renderTelemetry(history, locker) {
 
   document.getElementById("timelineStrip").innerHTML = samples.map((entry) => {
     const classes = ["timeline-chip"];
-    if (entry.vibration_score >= 70) classes.push("is-tamper");
+    if ((entry.vibration_count ?? 0) >= 10) classes.push("is-tamper");
     else if (entry.temperature > 35) classes.push("is-hot");
     else if (entry.door === 1) classes.push("is-door");
     else if (entry.has_package === 1) classes.push("is-package");

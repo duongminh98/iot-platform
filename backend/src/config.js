@@ -32,5 +32,6 @@ module.exports = {
   historyLimit: readNumber("HISTORY_LIMIT", 100),
   fcmProjectId: process.env.FCM_PROJECT_ID || null,
   fcmAccessToken: process.env.FCM_ACCESS_TOKEN || null,
+  mobileDemoLockerId: readNumber("MOBILE_DEMO_LOCKER_ID", 1),
   frontendDir: path.resolve(__dirname, "../../frontend")
 };

@@ -44,6 +44,8 @@ unsigned long lastTempTime = 0;
 int last_sent_fsr = -999;
 unsigned long lastFsrTime = 0;
 
+int last_door_state = -1;
+
 // ================= BIẾN TOÀN CỤC =================
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
@@ -234,6 +236,28 @@ void loop() {
     }
   }
 
+  // Logic cửa MC-38 kiểm tra liên tục
+  int current_door_state = digitalRead(PIN_DOOR);
+  if (current_door_state != last_door_state) {
+    if (last_door_state != -1) { // Không gửi ngay lúc mới bật nguồn
+      StaticJsonDocument<512> docDoor;
+      docDoor["timestamp"] = now;
+      docDoor["door"] = current_door_state;
+      docDoor["vibration"] = 0;
+      docDoor["vibration_count"] = 0;
+      docDoor["lock_state"] = "locked"; // Hoặc trạng thái thực tế
+      docDoor["rssi"] = WiFi.RSSI();
+      docDoor["uptime_ms"] = now;
+
+      char msgBuffer[512];
+      serializeJson(docDoor, msgBuffer);
+      Serial.print("Publishing Door State changed: ");
+      Serial.println(msgBuffer);
+      client.publish(topic_data.c_str(), msgBuffer);
+    }
+    last_door_state = current_door_state;
+  }
+
   // Mỗi 0.5 giây (500ms) kiểm tra và thực hiện in ra/gửi dữ liệu
   if (now - lastMsgTime >= 500) {
     lastMsgTime = now;
@@ -250,7 +274,7 @@ void loop() {
       doc["vibration_count"] = vibrationCount;
       
       // 3. Các cảm biến khác hardcode ở phase này
-      doc["door"] = 0; 
+      doc["door"] = last_door_state == -1 ? 0 : last_door_state; 
       // Bỏ hardcode has_package, fsr_raw, fsr_percent để tránh xung đột với luồng FSR
       doc["lock_state"] = "locked";
       
