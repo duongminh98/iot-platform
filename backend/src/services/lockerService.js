@@ -168,28 +168,14 @@ function buildAlertCandidates(previousState, reading, thresholds) {
   }
 
   // Core Logic for Vibration Theft Alarm (PRD)
-  if (reading.vibration === 1 && typeof reading.device_timestamp === "number") {
-    if (!vibrationQueues[reading.locker_id]) {
-      vibrationQueues[reading.locker_id] = [];
-    }
-    const q = vibrationQueues[reading.locker_id];
-    q.push(reading.device_timestamp);
-    if (q.length > 10) {
-      q.shift();
-    }
-
-    if (q.length === 10) {
-      const deltaT = q[9] - q[0];
-      if (deltaT <= 10000) {
-        addAlert(
-          candidates,
-          "theft_alarm",
-          "critical",
-          `Locker ${reading.locker_id} detected continuous vibration (10 times in ${deltaT}ms).`,
-          { delta_t_ms: deltaT }
-        );
-      }
-    }
+  if (typeof reading.vibration_count === "number" && reading.vibration_count >= 150) {
+    addAlert(
+      candidates,
+      "theft_alarm",
+      "critical",
+      `Locker ${reading.locker_id} detected continuous strong vibration (${reading.vibration_count} count).`,
+      { vibration_count: reading.vibration_count }
+    );
   }
 
   if (reading.lock_state === "locked" && reading.door === 1) {
@@ -252,7 +238,7 @@ function summarizeSeverity(candidates) {
   );
 }
 
-async function createDedupedAlerts(reading, candidates, thresholds, io, config) {
+async function createDedupedAlerts(reading, candidates, thresholds, io, config, mqttClient) {
   const createdAlerts = [];
   const dedupAfter = new Date(Date.now() - thresholds.alertDedupSeconds * 1000);
 
@@ -281,13 +267,20 @@ async function createDedupedAlerts(reading, candidates, thresholds, io, config) 
       io.emit("alert_created", alert);
     }
 
+    if ((alert.type === "theft_alarm" || alert.type === "tamper_detected") && mqttClient) {
+      mqttClient.publish("iot/system/security", JSON.stringify({
+        status: "theft",
+        message: alert.message
+      }));
+    }
+
     await notifyCriticalAlert(config, alert);
   }
 
   return createdAlerts;
 }
 
-async function handleLockerData(topic, messageBuffer, thresholds, io, config) {
+async function handleLockerData(topic, messageBuffer, thresholds, io, config, mqttClient) {
   const lockerId = parseDataTopic(topic);
   if (lockerId === null) {
     return;
@@ -324,7 +317,7 @@ async function handleLockerData(topic, messageBuffer, thresholds, io, config) {
     console.warn(alert.message);
   }
 
-  await createDedupedAlerts(reading, alertState.candidates, thresholds, io, config);
+  await createDedupedAlerts(reading, alertState.candidates, thresholds, io, config, mqttClient);
 
   const state = {
     ...reading,
@@ -563,7 +556,7 @@ async function startMqttInfrastructure(config, io) {
   client.on("message", async (topic, message) => {
     try {
       if (parseDataTopic(topic) !== null) {
-        await handleLockerData(topic, message, thresholds, io, config);
+        await handleLockerData(topic, message, thresholds, io, config, client);
       } else if (parseAckTopic(topic) !== null) {
         await handleLockerAck(topic, message, io);
       } else if (parseTempTopic(topic) !== null) {
